@@ -6,26 +6,49 @@ Consolidated design notes before any code. Builds on the README and NOTES.md.
 
 Archive and retrieval system for camera media mags. Not an editor. Keeps raw mags organised and findable, then hands out exactly the clips requested so they can be cut in a real NLE.
 
-Terminal-first, file-based, Ubuntu 26.04+ reference, open source. Optional thin desktop GUI later.
+Terminal-first, file-based, Ubuntu 26.04+ reference, open source. Optional thin desktop GUI later. Designed so the archive remains understandable and fixable by hand if the database disappears.
 
 ## Directory layout
 
+Configurable roots (defaults suggested at setup; operator can point mags, proxies, bins, db at separate ZFS datasets or paths).
+
 ```text
-archive/
-  mag-dumps/
-    <mag-uuid>/
-      <original camera files and sidecars>
-      magcard.txt          # complete manifest + confirmed metadata
-      magcard.*.backup     # conflict backups when rewritten
-  proxies/
-    320p/
-      <mag-uuid>/
-        <proxy files>
-  bins/                    # SMB-exported bins for NLEs
-    <user-or-request-id>/
+mags/                              # flat, no subfolders
+  <YYYYMMDD>_<mag-uuid>/           # shoot day (operator-confirmed) + UUID
+    <exact contents of the card>   # original filenames + sidecars only
+    magcard.txt                    # complete manifest + confirmed metadata
+    .magvault/                     # hidden, Magvault-internal only
+      magcard.*.backup
+
+proxies/
+  db/                              # 320p library proxies
+    <YYYYMMDD>_<mag-uuid>/
+      <proxy files, original basenames>
+  hq/                              # optional full-res lower-bitrate HEVC
+    <YYYYMMDD>_<mag-uuid>/
+      <proxy files>
+
+bins/                             # outside magvault tree by default; path configured at setup
+  <request-or-user-id>/
+
+db/
+  magvault.sqlite
+
+logs/
 ```
 
 No project folders on disk. All project relationships live in the database.
+
+## Mag rules (locked)
+
+- One physical card = one mag, unless explicitly split later.
+- One camera only. No mixing sources, cameras, or formats inside a mag.
+- Folder name: `<YYYYMMDD>_<mag-uuid>`. Date is the **shoot day** (guessed from camera date-modified or earliest media date, confirmed by operator). Never renamed after creation.
+- Contents: exact verified copy of the card (original filenames + matching sidecars). If it was not on the SD card, it is not in the mag folder — except `magcard.txt` and the hidden `.magvault/` backups of that card.
+- Mag card is plain text (`magcard.txt`), complete manifest + confirmed metadata + project link. Stays with the folder forever.
+- Merge of mags is forbidden (including cards from the same camera, because clip names are reused).
+- Split (later feature): creates new UUID folders. New shoot-day date is taken from the first file after the split point and confirmed by the operator. Original folder is updated or retired accordingly.
+- Whole folder remains self-describing if the database disappears.
 
 ## SQLite schema (sketch)
 
@@ -40,6 +63,7 @@ No project folders on disk. All project relationships live in the database.
 - id (UUID, primary key)
 - project_id (UUID, foreign key, required)
 - dump_path
+- shoot_date (the YYYYMMDD used in the folder name)
 - camera_model (confirmed)
 - file_format (confirmed)
 - gamma (confirmed)
@@ -70,6 +94,7 @@ Example shape:
 mag_uuid: ...
 project_uuid: ...
 project_name: ...
+shoot_date: 2026-11-18
 camera_model: ...
 file_format: ...
 gamma: ...
@@ -84,69 +109,79 @@ clip001.XML | 4567 | def...
 ...
 ```
 
-The card stays with the folder forever for identification if the dump is separated from the system.
-
 ## Conflict handling
 
 Database is authoritative.
 
 When a mismatch is detected (cold mag reappears, card differs from database for that mag UUID):
-1. Copy existing magcard.txt to magcard.YYYYMMDD-HHMMSS.backup (or *.datechanged.backup).
+1. Copy existing magcard.txt to `.magvault/magcard.YYYYMMDD-HHMMSS.backup`.
 2. Write a fresh magcard.txt from the current database record.
 
-Applies to all fields: camera, format, gamma, gamut, project assignment, manifest, notes.
+Applies to all fields: camera, format, gamma, gamut, project assignment, manifest, notes, shoot date.
 
 ## Ingest flow
 
 1. Operator plugs in physical mag (SD/USB) or points at mount point.
-2. System probes the card:
-   - Walk files and sidecars.
-   - Auto-detect guesses for camera model, file format, gamma, gamut (using available tools + detection lists inspired by BitMatch etc.).
+2. System probes the card (BitMatch-style full copy preparation):
+   - Walk all files and sidecars.
+   - Auto-detect guesses for camera model, file format, gamma, gamut, and shoot day.
    - Build full file list with sizes.
 3. Present guesses and file list to operator.
 4. Operator:
-   - Confirms or corrects camera model, file format, gamma, gamut.
-   - Assigns to an existing project (select from list) or creates a new project (which immediately receives a UUID).
+   - Confirms or corrects camera model, file format, gamma, gamut, and shoot day.
+   - Assigns to an existing project (select from list) or creates a new project (UUID assigned immediately).
    - Adds any mag-level notes.
-5. System performs verified copy into a new mag-dump folder named by the new mag UUID:
-   - Original filenames and sidecars preserved.
-   - SHA-256 hashed on the way in; destination verified (BitMatch-style).
+5. System performs verified copy into `mags/<shootday>_<new-mag-uuid>/`:
+   - Exact card contents, original filenames and sidecars preserved.
+   - SHA-256 hashed on the way in; destination verified.
    - Only proceeds to commit if verification passes.
 6. Write complete-manifest magcard.txt into the dump folder.
-7. Insert/update records in SQLite (mag UUID, project UUID, confirmed fields, asset rows with checksums).
-8. Generate 320p proxies (can be immediate or queued).
+7. Insert records in SQLite.
+8. Generate 320p proxies into `proxies/db/<shootday>_<mag-uuid>/` (immediate or queued).
 9. Mag is now online and linked.
 
-Per-file shot logging is not part of ingest. It can happen later while viewing proxies, in a dedicated pass, or with future ML.
+Per-file shot logging is not part of ingest.
+
+## Proxies
+
+- `proxies/db/` — always-on 320p library proxies. Same folder naming as mags.
+- `proxies/hq/` — optional full-resolution lower-bitrate HEVC (30-60 Mbps). Same naming. Generated only when requested.
+- Per-asset (or whole-mag) toggle in the encoding stage decides what also goes to `hq/`. Noted for later.
+- NLE-specific proxies (Resolve etc.) are created with bin exports and live with the bins, not here.
+
+## Bins
+
+Path configured at setup. Default suggestion outside the magvault tree (e.g. separate ZFS dataset). Program only writes exported bin folders to the configured path.
 
 ## Phase 0 – done when
 
-- Schema exists and can be created.
-- Probe + operator confirmation + project assignment works from the terminal.
-- Verified copy into mag-dump folder succeeds.
+- Schema exists.
+- Probe + operator confirmation (including shoot day) + project assignment works from the terminal.
+- Verified full-card copy into correctly named mag folder succeeds.
 - Mag card (complete manifest) and database records are written.
-- Basic 320p proxy can be generated.
-- Conflict detection and card rewrite (with backup) works when tested.
-- Usable entirely from the shell / small binaries. No GUI required.
+- Basic 320p proxy can be generated into the matching proxies/db folder.
+- Conflict detection and card rewrite (with backup in .magvault/) works.
+- Usable entirely from the shell. No GUI required.
 
-## Later phases (unchanged)
+## Later phases
 
 - Phase 1: whole-mag rsync backup + query views.
-- Phase 2: 320p library browser + request layer + bin export to SMB.
+- Phase 2: 320p library browser + request layer + bin export.
 - Phase 3: wrangler cold-storage pull and reingest.
-- Phase 4: optional egui/Vulkan desktop layer + boot-to-app image.
-- Phase 5: polish, packaging.
+- Phase 4: optional egui/Vulkan desktop layer + boot-to-app image. Split function.
+- Phase 5: polish, packaging. HQ proxy toggles.
 
 ## Borrowed ideas
 
-See NOTES.md. Main ones for Phase 0:
-- Verified SHA-256 copy and “only commit when verified” from BitMatch.
+See NOTES.md. Main ones in use:
+- Verified SHA-256 full-card copy from BitMatch.
 - Camera detection seed list from BitMatch.
 - Keep original names + sidecars.
 
-## Open points still to decide when coding
+## Open points
 
-- Exact terminal UI for the confirmation step (plain prompts vs ratatui).
-- Whether 320p generation is synchronous at end of ingest or always queued.
-- Checksum algorithm details and whether we also write an ASC MHL alongside the mag card.
-- How mount-point probing discovers cards automatically vs manual path.
+- Exact terminal UI for confirmation (plain prompts vs ratatui).
+- Whether 320p generation is synchronous or queued.
+- ASC MHL alongside mag card or not.
+- Automatic card discovery vs manual path.
+- Details of the later split UI and how the original folder is retired.
