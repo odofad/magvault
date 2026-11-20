@@ -6,13 +6,22 @@ Consolidated design notes before any code. Builds on the README and NOTES.md.
 
 Archive and retrieval system for camera media mags. Not an editor. Keeps raw mags organised and findable, then hands out exactly the clips requested so they can be cut in a real NLE.
 
-Terminal-first, file-based, Ubuntu 26.04+ reference, open source. Optional thin desktop GUI later. Designed so the archive remains understandable and fixable by hand if the database disappears.
+Terminal-first, file-based, Ubuntu 26.04+ reference, open source. Optional thin desktop GUI later. Designed so the archive remains understandable and fixable by hand if the database disappears. Fully portable: point a new install at the config directory and it continues.
 
-## Directory layout
+## Directory layout (locked)
 
-Configurable roots (defaults suggested at setup; operator can point mags, proxies, bins, db at separate ZFS datasets or paths).
+All roots are configurable. The program is pointed at a config directory (via argument, environment variable, or setup). Every other path is read from the files inside it. Defaults below can be overridden so the entire set lives on durable ZFS datasets.
 
 ```text
+config/                            # location supplied at startup
+  path.conf                        # all roots only: mags, proxies, bins, db, logs, ...
+  magvault.conf                    # non-path settings
+  encoding.conf                    # ffmpeg presets and proxy rules
+  ...                              # additional files as needed
+
+db/
+  magvault.sqlite                  # single database file
+
 mags/                              # flat, no subfolders
   <YYYYMMDD>_<mag-uuid>/           # shoot day (operator-confirmed) + UUID
     <exact contents of the card>   # original filenames + sidecars only
@@ -28,11 +37,8 @@ proxies/
     <YYYYMMDD>_<mag-uuid>/
       <proxy files>
 
-bins/                             # outside magvault tree by default; path configured at setup
+bins/                             # configured path, outside magvault tree by default
   <request-or-user-id>/
-
-db/
-  magvault.sqlite
 
 logs/
 ```
@@ -157,7 +163,7 @@ Per-file shot logging is not part of ingest.
 
 ## Bins
 
-Path configured at setup. Default suggestion outside the magvault tree (e.g. separate ZFS dataset). Program only writes exported bin folders to the configured path.
+Path configured in path.conf. Default suggestion outside the magvault tree (e.g. separate ZFS dataset). Program only writes exported bin folders to the configured path.
 
 ## Phase 0 – done when
 
