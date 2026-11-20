@@ -149,6 +149,12 @@ Per-file shot logging is not part of ingest.
 - Per-asset (or whole-mag) toggle in the encoding stage decides what also goes to `hq/`. Noted for later.
 - NLE-specific proxies (Resolve etc.) are created with bin exports and live with the bins, not here.
 
+### Proxy encoding rules (locked, all proxy types)
+
+- Resolution may change, but aspect ratio must be preserved.
+- Frame rate must match the source exactly. No conversion, no pulldown, no approximation.
+- Audio channels must never be downmixed. Channel count and layout stay identical to source. Codec or container may change; channels may not be collapsed.
+
 ## Bins
 
 Path configured at setup. Default suggestion outside the magvault tree (e.g. separate ZFS dataset). Program only writes exported bin folders to the configured path.
