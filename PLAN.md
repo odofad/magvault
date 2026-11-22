@@ -217,6 +217,15 @@ Ingest can run on a client terminal (or standalone machine). After a successful 
 - Checksums live in the mag cards, so verification works on any filesystem.
 - Encryption is handled at the OS level if desired (not by Magvault).
 
+**USB drive diagnostics and prepare (ingest screen)**
+- Only a Magvault-prepared drive (has valid `magvault-backup.txt` at root) can be selected as a backup target.
+- Any other drive is shown as “not valid”.
+- Not-valid drives offer a **Prepare** action.
+- Prepare requires the system sudo password as final confirmation. Nothing is written until the password is accepted.
+- Once prepared, Magvault will not offer Prepare again while the drive still contains mags marked “pending server sync”.
+- Prepare is only re-enabled after every mag on the drive has been successfully transferred to the server.
+- Valid drives with pending mags remain selectable as targets; they simply cannot be re-prepared until synced.
+
 All targets and states are visible and choosable on the ingest screen.
 
 ## Proxies
@@ -352,6 +361,7 @@ The dashboard must show:
 - Automatic + manual card discovery.
 - Full client ingest screen (staging, USB-as-staging, direct, mirror, warnings).
 - Field backup drives with magvault-backup.txt, reconnect-and-sync.
+- USB diagnostics, Prepare (sudo), and pending-sync safety rule.
 - Server confirmation + autoclean.
 
 ### Phase 2 – Proxy subsystem & telemetry
