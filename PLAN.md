@@ -1,3 +1,14 @@
+
+## Copy method
+
+All file copies in Magvault use `rsync` (whole directory or file as appropriate). This includes:
+- Ingest (card → staging → server)
+- Zmag manager (mag ↔ zmag)
+- Cold pull (zmag → server)
+- Any future export or restore path
+
+Progress is reported from rsync. Verified copies still run the ASC MHL / hash check after rsync finishes.
+
 # Magvault Planning Document
 
 Consolidated design notes before any code. Builds on the README and NOTES.md.
