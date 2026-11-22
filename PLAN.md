@@ -242,9 +242,12 @@ Separate from ingest. Per-clip (or per-asset) logging of descriptions, keywords,
 The dashboard is the first screen after launch. It shows status and is the way to enter other modules.
 
 **Server (or standalone) dashboard**
-- Full status from the local telemetry file: encoder queue depth + active job progress, zmag/zpool health (overall state + any non-ONLINE drives), simple counts (open projects, online mags, pending requests), recent events.
+- Full status from the local telemetry file: encoder queue depth + active job progress, ZFS health for both working datasets and zmags, simple counts (open projects, online mags, pending requests), recent events.
+- ZFS section shows:
+  - Working mounts (the datasets that hold mags, proxies, bins, db, etc. from path.conf): pool/dataset name, mountpoint, state (ONLINE / DEGRADED / FAULTED / UNAVAIL), used/available.
+  - Mounted zmags: same health view as before (overall state + any non-ONLINE drives).
 - Module menu: Ingest, Logging, Library, Export bins, Zmag manager, Profile Editor (admin), Logs, Settings.
-- Reads local telemetry file + light local checks.
+- Reads local telemetry file + light local checks (`zfs list`, `zpool status`).
 
 **Client dashboard**
 - Thin status: server connection state (online/offline/syncing), simple queue depth number when connected, local USB/staging status.
@@ -384,6 +387,7 @@ Readable without root. The **server** dashboard reads the local file. A client m
 
 The server dashboard must show:
 - Encoder queue depth and per-job progress.
+- ZFS health for the working datasets (mags, proxies, bins, db and any other configured roots) — pool/dataset, mount state, used/available.
 - Zpool health for every mounted zmag (overall state + any non-ONLINE drives) so failing disks are visible.
 
 ## Roadmap (revised)
