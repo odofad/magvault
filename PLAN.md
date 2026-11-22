@@ -14,9 +14,9 @@ All roots are configurable. The program is pointed at a config directory (via ar
 
 ```text
 config/                            # location supplied at startup
-  path.conf                        # all roots only: mags, proxies, bins, db, logs, telemetry_live, telemetry_disk, ...
+  path.conf                        # all roots only: mags, proxies, bins, db, logs, telemetry_live, telemetry_disk, cameras, ...
   magvault.conf                    # non-path settings
-  encoding.conf                    # ffmpeg presets and proxy rules
+  encoding.conf                    # ffmpeg presets and proxy rules (or replaced by encoder profile files)
   ...                              # additional files as needed
 
 db/
@@ -45,6 +45,11 @@ bins/                             # configured path, outside magvault tree by de
     exportcard.txt.backup          # single previous version
     <YYYYMMDD>_<mag-uuid>/         # original mag folder name
       <copied original clips + sidecars>
+
+cameras/                           # one .cam file per camera profile
+  sony-a7siii.cam
+  red-komodo.cam
+  ...
 
 logs/
 ```
@@ -105,6 +110,27 @@ Projects and mags are identified by UUID. Names are labels.
 - Closing or re-opening a project is a deliberate action. It only changes the flag; files on disk never move.
 - Default view everywhere except the library shows only open projects.
 
+## Camera profiles
+
+One plain-text `.cam` file per camera, all living in the `cameras/` folder (path in path.conf).
+
+- Server (or standalone) scans the folder on startup and on a manual reload.
+- Valid files are loaded into the database / served to clients.
+- Clients never read the files directly. They request the current profile list from the server over SSH (or use a local folder when running standalone).
+- Ordinary operators on the ingest screen can only select from existing profiles. They cannot invent new camera, format, gamma or gamut names.
+- Exact fields inside a `.cam` file are still open (will be finalised later, same approach as the database schema).
+- A starter set of common cameras will be shipped.
+
+## Profile Editor module
+
+Single admin-only module that owns creation, editing, duplication and deletion of every profile type:
+
+- Camera profiles (`.cam` files)
+- Encoder / proxy profiles (ffmpeg presets)
+- Any future profile type
+
+Files on disk remain the source of truth. The module reloads the relevant folders and the server serves the updated lists. Normal operators never see the Profile Editor.
+
 ## Mag card format
 
 Plain text file `magcard.txt` inside the dump folder. Complete manifest so missing files can be identified even without the database.
@@ -154,7 +180,7 @@ Applies to all fields: camera, format, gamma, gamut, project assignment, manifes
    - Build full file list with sizes.
 3. Present guesses and file list to operator.
 4. Operator:
-   - Confirms or corrects camera model, file format, gamma, gamut, and shoot day.
+   - Confirms or corrects camera model, file format, gamma, gamut, and shoot day (selected only from existing profiles).
    - Assigns to an existing **open** project (select from list) or creates a new project (UUID assigned immediately, status open).
    - Adds any mag-level notes.
 5. System performs verified copy into `mags/<shootday>_<new-mag-uuid>/`:
@@ -360,6 +386,7 @@ The dashboard must show:
 - HQ proxy toggle.
 - Optional egui/Vulkan layer.
 - Packaging and docs.
+- Profile Editor module (camera + encoder profiles).
 
 ## Borrowed ideas
 
@@ -383,3 +410,4 @@ See NOTES.md. Main ones in use:
 - Failure and retry semantics for every copy path.
 - Logging strategy.
 - Details of the later split UI.
+- Exact fields inside a camera `.cam` profile.
