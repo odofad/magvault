@@ -305,23 +305,53 @@ The dashboard must show:
 - Encoder queue depth and per-job progress.
 - Zpool health for every mounted zmag (overall state + any non-ONLINE drives) so failing disks are visible.
 
-## Phase 0 – done when
+## Roadmap (revised)
 
-- Schema exists.
-- Probe + operator confirmation (including shoot day) + project assignment works from the terminal.
-- Verified full-card copy into correctly named mag folder succeeds.
-- Mag card (complete manifest) + ASC MHL and database records are written.
-- 320p proxy job is queued on the server.
-- Conflict detection and card rewrite (with backup in .magvault/) works.
-- Usable entirely from the shell. No GUI required.
+### Phase 0 – Foundation
+- Config directory + path.conf + system pointer file.
+- SQLite schema created.
+- Manual-path ingest: probe, operator confirm, verified copy, magcard.txt + ASC MHL, DB records, queue 320p job.
+- Conflict rewrite of mag card.
+- Basic shell only.
 
-## Later phases
+### Phase 1 – Client ingest & field backups
+- Automatic + manual card discovery.
+- Full client ingest screen (staging, USB-as-staging, direct, mirror, warnings).
+- Field backup drives with magvault-backup.txt, reconnect-and-sync.
+- Server confirmation + autoclean.
 
-- Phase 1: whole-mag rsync backup + query views.
-- Phase 2: 320p library browser + request layer + bin export.
-- Phase 3: wrangler cold-storage pull and reingest. Zmag manager.
-- Phase 4: optional egui/Vulkan desktop layer + boot-to-app image. Split function.
-- Phase 5: polish, packaging. HQ proxy toggles.
+### Phase 2 – Proxy subsystem & telemetry
+- Server-side encode queue (320p).
+- Proxy rules enforced.
+- Live telemetry file (encoder queue) + periodic disk snapshot.
+- Minimal dashboard that reads the telemetry file.
+
+### Phase 3 – Export bins & library requests
+- Named export folders + exportcard.txt.
+- Copy originals only.
+- Discover exports by walking bins path.
+- Select clips → create/add to export.
+- Cold-pull request generation.
+
+### Phase 4 – Zmag manager (local)
+- Create zmag from raw drives.
+- Auto-import/mount recognised zmags only.
+- Two-pane backup terminal.
+- Auto-backup pass.
+- Placement tracking + on-zmag manifest.
+- Zpool health in telemetry.
+
+### Phase 5 – Remote zmag + key module + cold pull
+- SSH key module.
+- Remote zmag station.
+- Full cold-pull workflow.
+
+### Phase 6 – Polish & optional desktop
+- Full dashboard client.
+- Split function.
+- HQ proxy toggle.
+- Optional egui/Vulkan layer.
+- Packaging and docs.
 
 ## Borrowed ideas
 
@@ -333,5 +363,15 @@ See NOTES.md. Main ones in use:
 ## Open points
 
 - Exact terminal UI for confirmation (plain prompts vs ratatui).
-- Details of the later split UI and how the original folder is retired.
-- Dashboard client that reads the telemetry file (including encoder queue and zpool health).
+- How project list and “create new project” work in the terminal.
+- Precise SQLite tables for placements, encode jobs, pull requests, exports.
+- Encode queue implementation details.
+- How the server notices a newly committed mag and enqueues the proxy job.
+- Card-layout detection completeness and fallback.
+- Exact on-zmag manifest format and location.
+- Export discovery: pure filesystem walk vs light index.
+- Telemetry JSON schema.
+- Key module restrictions.
+- Failure and retry semantics for every copy path.
+- Logging strategy.
+- Details of the later split UI.
