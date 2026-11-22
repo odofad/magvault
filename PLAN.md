@@ -9,6 +9,16 @@ SHA-256 is computed at ingest, while the card is first read.
 - Every later copy (USB backup, rsync to server, rsync to zmag) is verified against the stored SHA-256.
 - A mismatch is an integrity error and is reported. The copy is not committed.
 
+
+### Incoming staging
+
+`incoming` lives inside the mags dataset so the final move is an atomic rename.
+
+- Default: `incoming=/magvault/mags/.incoming` (or equivalent under the configured mags root).
+- Magvault refuses to start an ingest if `incoming` is on a different filesystem from `mags/`.
+- The mags root may contain the hidden `.incoming` directory. It is not a mag and is ignored by mag listing.
+- A separate staging dataset is not used for ingest. It would require a second full copy.
+
 ## Copy method
 
 All file copies in Magvault use `rsync` (whole directory or file as appropriate). This includes:
