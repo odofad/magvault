@@ -294,6 +294,23 @@ container: mp4
 - `rate_control` + either `crf` or `bitrate`
 - `audio_codec`
 
+## Settings module
+
+Admin-only on the server. Client shows only client-relevant settings.
+
+**Server (admin only, running as `magvault`)**
+- Edit `path.conf` roots (mags, proxies, bins, db, logs, cameras, encoders, custom_encode, telemetry paths, etc.).
+- Future non-path settings live in `magvault.conf` and appear here when they exist.
+- Save writes the files.
+- Validate that paths exist or can be created.
+
+**Client**
+- Local proxy cache path.
+- Server SSH host / user (limited edit).
+- No server paths. No admin settings.
+
+No other non-path settings are defined today. They are added when a module needs them.
+
 ## Profile Editor module
 
 Single admin-only module that owns creation, editing, duplication and deletion of every profile type:
