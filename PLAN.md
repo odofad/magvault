@@ -39,6 +39,11 @@ proxies/
     <YYYYMMDD>_<mag-uuid>/
       <proxy files>
 
+custom_encode/                     # ad-hoc / manual encoder output only
+  <YYYYMMDD>_<mag-uuid>/
+    <profile-name>/
+      <output files>
+
 bins/                             # configured path, outside magvault tree by default
   <operator-assigned-name>/        # export folder
     exportcard.txt
@@ -269,6 +274,30 @@ Both versions are ratatui. Esc/q returns to the dashboard from any module. Keybo
 - Standalone mouse-first application (egui/Vulkan or similar).
 - Not part of the current terminal work. Terminal version remains primary.
 
+## Encoder module
+
+Mostly automatic: successful ingest queues a 320p job on the server. The module is the place to watch, manage, and override.
+
+**Queue view**
+- Depth, active jobs (progress, mag, type 320p/HQ/custom, profile, elapsed), waiting jobs, failed jobs.
+- Per failed job: clear error reason (ffmpeg exit, disk full, missing source, bad profile, etc.).
+- Actions: pause/resume queue, retry failed, cancel, re-queue, bump priority.
+
+**New job screen (ad-hoc)**
+1. Select mag (online mags, filterable by project).
+2. Select files or whole mag.
+3. Select output profile (from existing encoder profiles).
+4. Destination is fixed: the `custom_encode/` folder (path in path.conf).
+   Output lands under `custom_encode/<YYYYMMDD>_<mag-uuid>/<profile-name>/`.
+   These files are **not** written into `proxies/db/` or `proxies/hq/`, are not linked as official proxies, and are not logged as Magvault assets. Pure encoder output.
+
+**Rules / profiles**
+- Show currently active default profile(s).
+- One-key jump to the Profile Editor for encoder profiles.
+- Strict proxy rules still apply (aspect preserved, exact frame rate, no audio downmix).
+
+Dashboard stays light (queue depth + active progress). Full management lives in this module.
+
 ## Proxies
 
 - `proxies/db/` — always-on 320p library proxies. Same folder naming as mags.
@@ -412,6 +441,7 @@ The server dashboard must show:
 - Live telemetry file (encoder queue) + periodic disk snapshot.
 - Server dashboard (landing screen) that reads the telemetry file.
 - Client dashboard (thin status + module menu).
+- Encoder module: queue management, new ad-hoc job to custom_encode/, profile shortcut.
 
 ### Phase 3 – Export bins & library requests
 - Named export folders + exportcard.txt.
