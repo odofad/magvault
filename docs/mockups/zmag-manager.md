@@ -38,18 +38,18 @@ Behaviour source of truth is `PLAN.md` ("Zmag manager"). The module runs on the 
 ║                                                            ║│                                                                                      │
 ║                                                            ║│                                                                                      │
 ║ c copy to selected zmag (whole mag)                        ║│ ← → switch zmag                                                                      │
-║ s snapshots   p pool health                                ║│ zmag-03 is a remote station (SSH)                                                    │
+║ s snapshots   p pool health   n new zmag                   ║│ zmag-03 is a remote station (SSH)                                                    │
 ╚════════════════════════════════════════════════════════════╝└──────────────────────────────────────────────────────────────────────────────────────┘
 ┌─ 3 Operations ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Auto-backup   ON  zmag-02 inserted: copying everything that needs a second copy                                                                    │
-│ ▶ 20250519_c41d77 → zmag-02                                                                                                                        │
+│ ▶ 20250519_c41d77 → zmag-02   rsync · whole mag directory · hash check after copy                                                                  │
 │ ██████████████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  41%  87 GB / 212 GB            │
 │ queued  20250410_11ab90 · 20250412_55d0aa → zmag-02                                                                                                │
 │                                                                                                                                                    │
 │ Cold pull requests  1 pending: 20250412_55d0aa → Bamba_Cutaways (zmag-03 remote, dock needed)                                                      │
 │                                                                                                                                                    │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- Tab pane · ↑↓ move · ←→ zmag · c copy · f project · a auto-backup · s snapshots · p pool health · Esc dashboard
+ Tab pane · ↑↓ move · ←→ zmag · c copy · f project · a auto-backup · n new zmag · s snapshots · p health · Esc dashboard
 ```
 
 ## Main two-pane view, 120x36 (minimum)
@@ -79,18 +79,18 @@ Behaviour source of truth is `PLAN.md` ("Zmag manager"). The module runs on the 
 ║                                                ║│                                                                    │
 ║                                                ║│                                                                    │
 ║ c copy to selected zmag (whole mag)            ║│ ← → switch zmag                                                    │
-║ s snapshots   p pool health                    ║│ zmag-03 is a remote station (SSH)                                  │
+║ s snapshots   p pool health   n new zmag       ║│ zmag-03 is a remote station (SSH)                                  │
 ╚════════════════════════════════════════════════╝└────────────────────────────────────────────────────────────────────┘
 ┌─ 3 Operations ───────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ Auto-backup   ON  zmag-02 inserted: copying everything that needs a second copy                                      │
-│ ▶ 20250519_c41d77 → zmag-02                                                                                          │
+│ ▶ 20250519_c41d77 → zmag-02   rsync · whole mag directory · hash check after copy                                    │
 │ ███████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  41%  87 GB / 212 GB          │
 │ queued  20250410_11ab90 · 20250412_55d0aa → zmag-02                                                                  │
 │                                                                                                                      │
 │ Cold pull requests  1 pending: 20250412_55d0aa → Bamba_Cutaways (zmag-03 remote, dock needed)                        │
 │                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- Tab · ↑↓ · ←→ zmag · c copy · a auto · s snaps · p health · Esc dash
+ Tab · ↑↓ · ←→ · c copy · a auto · n new · s snaps · p health · Esc dash
 ```
 
 ## Snapshots (`s`), 150x42
@@ -269,17 +269,109 @@ Behaviour source of truth is `PLAN.md` ("Zmag manager"). The module runs on the 
  ↑↓ move · b scrub · r replace drive · t self-test · m refresh · Tab pane · Esc back to zmag manager
 ```
 
+## New zmag (`n`), 150x42
+
+```text
+ MAGVAULT  ·  Zmag manager  ·  new zmag                                                                                          server only · odofad
+╔═ 1 Raw drives (mark exactly four) ══════════════════════════════════════════╗┌─ 2 Confirm ─────────────────────────────────────────────────────────┐
+║                                                                             ║│                                                                     │
+║ drive      model            size     state                                  ║│ name          zmag-04  (auto-generated, next free)                  │
+║ [x] sdi     ST4000VN006      4.0 TB   raw, unused                           ║│ layout        raidz1 · 4 drives · about 11.6 TB usable              │
+║ [x] sdj     ST4000VN006      4.0 TB   raw, unused                           ║│                                                                     │
+║ [x] sdk     ST4000VN006      4.0 TB   raw, unused                           ║│ fixed properties                                                    │
+║ [x] sdl     ST4000VN006      4.0 TB   raw, unused                           ║│   recordsize=1M                                                     │
+║ [ ] sdm     WD40EFAX         4.0 TB   raw, unused                           ║│   compression=lz4                                                   │
+║ [ ] sdn     USB flash        64 GB    raw, unused                           ║│   atime=off                                                         │
+║                                                                             ║│   magvault:type=zmag                                                │
+║ 4 of 4 marked                                                               ║│                                                                     │
+║                                                                             ║│ [!] Drives sdi sdj sdk sdl will be erased.                          │
+║ Space mark / unmark                                                         ║│ This cannot be undone.                                              │
+║ Only drives with no pool and no partitions are listed.                      ║│                                                                     │
+║                                                                             ║│ Needs the sudo password (zpool create).                             │
+║ Pools already on the system (not listed, never touched):                    ║│                                                                     │
+║   tank      not a zmag, ignored                                             ║│  Enter  CREATE ZMAG      Esc  cancel                                │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│ 3  Create the pool and mount it.                                    │
+║                                                                             ║│     New zmag then appears in the contents pane.                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+║                                                                             ║│                                                                     │
+╚═════════════════════════════════════════════════════════════════════════════╝└─────────────────────────────────────────────────────────────────────┘
+ ↑↓ move · Space mark · Tab pane · Enter create (asks sudo password) · Esc back to zmag manager
+```
+
+## New zmag (`n`), 120x36 (minimum)
+
+```text
+ MAGVAULT  ·  Zmag manager  ·  new zmag                                                            server only · odofad
+╔═ 1 Raw drives (mark exactly four) ═════════════════════════╗┌─ 2 Confirm ────────────────────────────────────────────┐
+║                                                            ║│                                                        │
+║ drive      model            size     state                 ║│ name          zmag-04  (auto-generated, next free)     │
+║ [x] sdi     ST4000VN006      4.0 TB   raw, unused          ║│ layout        raidz1 · 4 drives · about 11.6 TB usable │
+║ [x] sdj     ST4000VN006      4.0 TB   raw, unused          ║│                                                        │
+║ [x] sdk     ST4000VN006      4.0 TB   raw, unused          ║│ fixed properties                                       │
+║ [x] sdl     ST4000VN006      4.0 TB   raw, unused          ║│   recordsize=1M                                        │
+║ [ ] sdm     WD40EFAX         4.0 TB   raw, unused          ║│   compression=lz4                                      │
+║ [ ] sdn     USB flash        64 GB    raw, unused          ║│   atime=off                                            │
+║                                                            ║│   magvault:type=zmag                                   │
+║ 4 of 4 marked                                              ║│                                                        │
+║                                                            ║│ [!] Drives sdi sdj sdk sdl will be erased.             │
+║ Space mark / unmark                                        ║│ This cannot be undone.                                 │
+║ Only drives with no pool and no partitions are listed.     ║│                                                        │
+║                                                            ║│ Needs the sudo password (zpool create).                │
+║ Pools already on the system (not listed, never touched):   ║│                                                        │
+║   tank      not a zmag, ignored                            ║│  Enter  CREATE ZMAG      Esc  cancel                   │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+║                                                            ║│ 3  Create the pool and mount it.                       │
+║                                                            ║│     New zmag then appears in the contents pane.        │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+║                                                            ║│                                                        │
+╚════════════════════════════════════════════════════════════╝└────────────────────────────────────────────────────────┘
+ ↑↓ move · Space mark · Tab pane · Enter create (asks sudo password) · Esc back to zmag manager
+```
+
 ## Main view panes
 
 | # | Pane | Notes |
 |---|------|-------|
 | 1 | Server mags | Online server mags, filterable by project. A copies column shows how many zmags hold each mag (0 or 1 in amber, 2+ in green) with a dot per zmag, so the backup view is visible at a glance. |
 | 2 | Zmag contents | Tabs for each mounted zmag (local and remote). Shows id, role (primary / backup), where it lives, state, usage, and the mags it holds. A remote zmag is a read-only status view here. |
-| 3 | Operations | Auto-backup state and the active copy with progress, queued copies, and pending cold-pull requests (with a note when a dock is needed). |
+| 3 | Operations | Auto-backup state and the active copy with rsync progress, queued copies, and pending cold-pull requests (with a note when a dock is needed). |
 
-- Copy is whole-mag only (`c` copies the selected mag to the selected zmag).
+- Copy is whole-mag only (`c` copies the selected mag to the selected zmag). Copies use `rsync` on the whole mag directory, with progress shown in the operations strip. The ASC MHL / hash check runs after rsync finishes (see "Copy method" in `PLAN.md`).
 - Auto-backup: inserting the first zmag copies everything that needs a first copy; inserting the second copies everything that needs a second copy.
 - Only recognised zmags (property `magvault:type=zmag`) are ever imported or mounted. Other pools are ignored.
+
+## Create flow (`n`)
+
+Per `PLAN.md`: list the available raw drives, mark exactly four, confirm the auto-generated name (`zmag-NN`) and the fixed properties (`recordsize=1M`, `compression=lz4`, `atime=off`, `magvault:type=zmag`), enter the sudo password, create and mount the pool. The new zmag then appears in the zmag contents pane. Only drives with no pool and no partitions are listed, and pools that are not zmags are never touched.
 
 ## Secondary screens
 
@@ -297,16 +389,17 @@ Opened by key from the main view. `Esc` returns to the main two-pane view (not t
 | `Left` / `Right` | Switch zmag |
 | `c` | Copy selected mag to selected zmag |
 | `f` | Cycle project filter |
-| `a` | Toggle auto-backup |
+| `a` | Toggle / trigger auto-backup |
+| `n` | New zmag from four raw drives |
 | `s` | Snapshots screen |
 | `p` | Pool / drive health screen |
 | `Esc` | Main view: return to the dashboard. Secondary screens: back to the main view. |
 
+**New zmag screen:** `Space` mark / unmark a drive, `Enter` create (asks for the sudo password), `Esc` back to the zmag manager.
 **Snapshots screen:** `h` hold / release, `d` destroy (asks), `m` mag snapshots, `z` zmag snapshots, `y` / `n` answer the confirmation.
 **Pool health screen:** `b` scrub, `r` replace drive, `t` SMART self-test, `m` refresh SMART.
 
 ## Not covered yet
 
-- Creating a zmag from four raw drives (Phase 4).
 - Remote zmag station management and the Key module (Phase 5).
 - All sample values (mags, sizes, drive names, SMART numbers, dates) are placeholders.

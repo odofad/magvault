@@ -95,7 +95,7 @@ Source of truth for behaviour is `PLAN.md` (ingest flow, mag rules, targets). Th
 └────────────────────────────────┘└──────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────┘
 ╔═ Ingesting ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
 ║ [ x ABORT ]  ████████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  18.2 GB / 42.7 GB  (43%)              ║
-║ ● copy + hash   ○ verify    ○ magcard + MHL   ○ database    ○ queue 320p                                                                           ║
+║ ● rsync copy    ○ hash + verify  ○ magcard + MHL   ○ database    ○ queue 320p                                                                      ║
 ╚════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
 ┌─ 5 Targets ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ [x] Local staging   /tmp/magvault-staging           █████░░░░░░░ 43%                                                                               │
@@ -105,8 +105,8 @@ Source of truth for behaviour is `PLAN.md` (ingest flow, mag rules, targets). Th
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌─ Log ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ pull started    Generic DCIM → local staging                                                                                                       │
-│ hashing         SHA-256 while copying                                                                                                              │
-│ next            verify, magcard.txt + ascmhl/, database, 320p queue                                                                                │
+│ hashing         SHA-256 after rsync finishes                                                                                                       │
+│ next            hash + verify, magcard.txt + ascmhl/, database, 320p queue                                                                         │
 │ locked          details and project cannot change until commit                                                                                     │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  x abort ingest  ·  l log  ·  Esc dashboard  ·  inputs locked until verified
@@ -200,7 +200,7 @@ Below 120x36, show a "resize terminal" message instead of a broken layout.
 ## Behaviour notes
 
 - **Pull is gated.** `p` only works once camera, format, gamma, gamut, project, shoot day and at least one target are confirmed (the "Confirm before pull" lines in pane 4).
-- **Pipeline stages** match `PLAN.md`: copy and hash, verify destination, write `magcard.txt` and ASC MHL, record in database, queue 320p proxies.
+- **Pipeline stages** match `PLAN.md`: rsync copy, then hash and verify the destination, write `magcard.txt` and ASC MHL, record in database, queue 320p proxies.
 - **Unsafe until verified.** The card must stay inserted until hashes match.
 - **Inputs lock** during a pull. Panes 1-4 dim and ignore keys.
 - **USB validity:** only drives with a valid `magvault-backup.txt` at root can be selected as backup targets. Others are “not valid” and offer Prepare.
