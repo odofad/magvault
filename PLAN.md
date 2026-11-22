@@ -267,7 +267,7 @@ Free-text fields (Description, Technical note) must look like editable input box
 - **Undo / revert**:
   - Light undo (`Ctrl+Z`) for the current field.
   - Revert loads the last backup of the mag file (`.magvault/magcard.*.backup` or equivalent log sidecar backup). The database does not store its own backup; the mag file on disk is the recoverable copy.
-- Filter behaviour for the clip list is still open.
+- **No clip-list filter in v1.** Mag list + logged/unlogged markers + next/previous unlogged is enough. Filter can be added later if needed.
 
 ## Dashboard (landing screen)
 
