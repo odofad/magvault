@@ -112,9 +112,9 @@ Keyboard first (arrows + Enter, or a single-letter shortcut). Mouse optional. `E
 ║                            ║│ Host         server (ssh)                                ││          1 mag pending sync                              │
 ║   [g] Logging (local)      ║│ Queue depth  3                                           ││ USB      BACKUP1 (master)  valid                         │
 ║                            ║│ Last sync    19:20 · 1 mag                               ││          2 mags pending sync                             │
-║   [s] Server dashboard     ║│                                                          ││ USB      NEW_64  not valid                               │
+║   [l] Library              ║│                                                          ││ USB      NEW_64  not valid                               │
 ║                            ║│ states: online · offline · syncing                       ││                                                          │
-║                            ║└──────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
+║   [s] Server dashboard     ║└──────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
 ║                            ║┌─ Server-only status ─────────────────────────────────────────────────────────────────────────────────────────────────┐
 ║                            ║│ Encoder progress and zmag health stay on the server. s opens it over SSH.                                            │
 ║                            ║└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -139,14 +139,14 @@ Keyboard first (arrows + Enter, or a single-letter shortcut). Mouse optional. `E
 ║                            ║│                                                                                                                      │
 ║                            ║│                                                                                                                      │
 ║                            ║│                                                                                                                      │
-║                            ║│                                                                                                                      │
-║                            ║│                                                                                                                      │
+║ Library: local proxies     ║│                                                                                                                      │
+║ + export requests          ║│                                                                                                                      │
 ║                            ║│                                                                                                                      │
 ║                            ║│                                                                                                                      │
 ║ ↑↓ move   Enter open       ║│                                                                                                                      │
 ║ Esc / q: back here         ║│                                                                                                                      │
 ╚════════════════════════════╝└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑↓ Enter open  ·  i ingest  ·  g logging  ·  s server dashboard  ·  Tab pane  ·  q quit
+ ↑↓ Enter open  ·  i ingest  ·  g logging  ·  l library  ·  s server dashboard  ·  Tab pane  ·  q quit
 ```
 
 ## Client dashboard, 120x36 (minimum)
@@ -159,9 +159,9 @@ Keyboard first (arrows + Enter, or a single-letter shortcut). Mouse optional. `E
 ║                        ║│ Host         server (ssh)                   ││          1 mag pending sync                 │
 ║   [g] Logging (local)  ║│ Queue depth  3                              ││ USB      BACKUP1 (master)  valid            │
 ║                        ║│ Last sync    19:20 · 1 mag                  ││          2 mags pending sync                │
-║   [s] Server dashboard ║│                                             ││ USB      NEW_64  not valid                  │
+║   [l] Library          ║│                                             ││ USB      NEW_64  not valid                  │
 ║                        ║│ states: online · offline · syncing          ││                                             │
-║                        ║└─────────────────────────────────────────────┘└─────────────────────────────────────────────┘
+║   [s] Server dashboard ║└─────────────────────────────────────────────┘└─────────────────────────────────────────────┘
 ║                        ║┌─ Server-only status ───────────────────────────────────────────────────────────────────────┐
 ║                        ║│ Encoder progress and zmag health stay on the server. s opens it over SSH.                  │
 ║                        ║└────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -180,14 +180,14 @@ Keyboard first (arrows + Enter, or a single-letter shortcut). Mouse optional. `E
 ║                        ║│                                                                                            │
 ║                        ║│                                                                                            │
 ║                        ║│                                                                                            │
-║                        ║│                                                                                            │
-║                        ║│                                                                                            │
+║ Library: local proxies ║│                                                                                            │
+║ + export requests      ║│                                                                                            │
 ║                        ║│                                                                                            │
 ║                        ║│                                                                                            │
 ║ ↑↓ move   Enter open   ║│                                                                                            │
 ║ Esc / q: back here     ║│                                                                                            │
 ╚════════════════════════╝└────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑↓ Enter open  ·  i ingest  ·  g logging  ·  s server dashboard  ·  Tab pane  ·  q quit
+ ↑↓ Enter open  ·  i ingest  ·  g logging  ·  l library  ·  s server dashboard  ·  Tab pane  ·  q quit
 ```
 
 ## Server panes
@@ -204,7 +204,7 @@ Keyboard first (arrows + Enter, or a single-letter shortcut). Mouse optional. `E
 
 | # | Pane | Suggested widget | Notes |
 |---|------|------------------|-------|
-| 1 | Modules | `List` + `ListState` | Ingest, Logging (works against local media), and "Server dashboard" which opens the full server dashboard over SSH. |
+| 1 | Modules | `List` + `ListState` | Ingest, Logging (works against local media), Library (local proxies + export requests), and "Server dashboard" which opens the full server dashboard over SSH. A short note under the menu spells out what Library means on the client. |
 | 2 | Server | `Paragraph` | Connection state (online / offline / syncing), host, a simple queue depth number when connected, last sync. |
 | 3 | Local media | `Paragraph` | Local staging and USB backup drives (valid / not valid, pending sync counts). First-class on the client. |
 | - | Server-only status | `Paragraph` | Reminder that encoder progress and zmag health are on the server. |
@@ -217,7 +217,7 @@ Keyboard first (arrows + Enter, or a single-letter shortcut). Mouse optional. `E
 | `Tab` / `Shift+Tab` | Next / previous pane |
 | `Up` / `Down` | Move within a list |
 | `Enter` | Open the selected module |
-| Module letter | Open that module directly (`i` Ingest, `g` Logging, `l` Library, `e` Export bins, `z` Zmag manager, `p` Profile Editor, `v` Logs, `s` Settings; on the client `s` opens the server dashboard) |
+| Module letter | Open that module directly (`i` Ingest, `g` Logging, `l` Library, `e` Export bins, `z` Zmag manager, `p` Profile Editor, `v` Logs, `s` Settings; on the client `i` Ingest, `g` Logging, `l` Library and `s` the server dashboard) |
 | `r` | Refresh now |
 | `Esc` / `q` | In a module: back to the dashboard. On the dashboard: `q` quits. |
 
