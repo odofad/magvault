@@ -542,6 +542,26 @@ Dashboard stays light (queue depth + active progress). Full management lives in 
 - Frame rate must match the source exactly. No conversion, no pulldown, no approximation.
 - Audio channels must never be downmixed. Channel count and layout stay identical to source. Codec or container may change; channels may not be collapsed.
 
+## Library module
+
+Available on both server and client.
+
+**Server**
+- Project → Mag → Clips → Player + Export list.
+- “Add to list” updates `exportcard.txt` immediately.
+- Export action starts the media copy. If any clip is cold, a cold-pull request is created for the Zmag manager.
+- Status strip shows warm / cold / pulling.
+
+**Client**
+- Same four-pane layout.
+- Keeps a local cache of 320p proxies (path in client path.conf, e.g. `client-proxies/`).
+- Pull proxies action (or automatic on connect) fetches missing 320p proxies from the server for the mags being browsed.
+- Clip list shows proxy status: local / missing / pulling.
+- Export creates a request on the server. When the server finishes (including any cold pull), the client can pull the finished files.
+- Offline: can browse recently synced mags and build a list; Export is queued until connected.
+
+The export list the operator sees is the export card. The program uses the card to know which mags and clips to pull.
+
 ## Export bins (locked)
 
 Path configured in path.conf. Default suggestion outside the magvault tree (e.g. separate ZFS dataset).
