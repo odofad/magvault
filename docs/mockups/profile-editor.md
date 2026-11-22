@@ -5,6 +5,8 @@
 
 Behaviour source of truth is `PLAN.md` ("Camera profiles", "Encoder profiles", "Profile Editor module", "User model"). The module is visible only when running as the `magvault` user. Normal operators and clients never see it. Files on disk stay the source of truth.
 
+`Esc` returns to the dashboard. If there are unsaved changes, Magvault prompts “Discard changes?” before leaving.
+
 ## Camera profile, 150x42
 
 ```text
