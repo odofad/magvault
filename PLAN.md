@@ -299,16 +299,37 @@ container: mp4
 
 Logs live in files under the `logs/` path (from path.conf). They are never written to the database.
 
-- One file per day, or rotated files, plain text.
-- Viewer shows newest first.
-- Filter by module (Ingest, Encoder, Zmag, Library, …) or by level (info / warn / error).
-- Detail pane for the selected entry.
-- Optional follow / tail mode for live logs.
+### File layout
+- One file per day: `logs/YYYY-MM-DD.log`
+- Plain text, one entry per line.
+- Line format:
+  ```
+  2026-11-22T21:15:03Z  INFO   ingest    Mag 20250520_a3f9c2 ingested (84 GB)
+  2026-11-22T21:15:04Z  WARN   encoder   Proxy failed for A001_C005.mov: timeout
+  2026-11-22T21:15:05Z  ERROR  zmag      zmag-02 degraded: sdg faulted
+  ```
+- Fields: timestamp (UTC), level (INFO/WARN/ERROR), module, message.
 
-**Retention**
-- History length is a setting in `magvault.conf`.
-- Default: 30 days.
-- Older log files are pruned.
+### Viewer
+- Newest first.
+- Filter by module (ingest, encoder, zmag, library, logging, …) or by level.
+- Detail pane shows the full selected line plus any multi-line context that follows it.
+- Optional follow / tail mode (`f`) that keeps the view at the bottom as new lines arrive.
+
+### Retention
+- Setting in `magvault.conf`: `log_retention_days`.
+- Default: 30.
+- On startup and daily, files older than the retention period are deleted.
+
+### Modules that write logs
+- Ingest
+- Encoder
+- Zmag manager
+- Library / Export
+- Logging
+- Settings (config changes)
+- System (startup, shutdown, errors)
+
 
 ## Settings module
 
