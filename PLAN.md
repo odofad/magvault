@@ -145,6 +145,18 @@ Magvault has no internal user database. Access is the system user plus SSH keys.
 
 Admin is simply “running as the `magvault` user”. Clients never become admin.
 
+### Sudo (no root)
+
+The `magvault` user never runs as root. It is granted passwordless sudo for specific ZFS commands only:
+
+```
+magvault ALL=(root) NOPASSWD: /usr/sbin/zpool, /usr/sbin/zfs
+```
+
+Magvault calls `sudo zpool` / `sudo zfs` when it needs to create, import, export or manage a zmag.  
+Clients (`magvaultclient`) have no sudo rights.  
+All other Magvault operations run unprivileged.
+
 ## Mag card format
 
 Plain text file `magcard.txt` inside the dump folder. Complete manifest so missing files can be identified even without the database.
