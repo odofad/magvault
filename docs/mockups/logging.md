@@ -7,6 +7,8 @@ Behaviour source of truth is `PLAN.md` ("Logging module", "Logging fields (locke
 
 The screens show one moment: clip `A001_C005.mov` selected and the Tags field being typed into, so the tag popup is open.
 
+When the typed text matches nothing, the popup shows a single line `[create "typed text"]`. Enter on that line adds the new tag for everyone.
+
 ## Server logging, 150x42
 
 ```text
@@ -27,7 +29,7 @@ The screens show one moment: clip `A001_C005.mov` selected and the Tags field be
 ║                                  ║│                                                            ││   │ sunrise                                │     │
 ║   ✓ A001_C001.mov  ★★★★☆         ║│                                                            ││   │ sunglasses                             │     │
 ║   ✓ A001_C002.mov  ★★★☆☆  SM     ║│                                                            ││   └────────────────────────────────────────┘     │
-║   ✓ A001_C003.mov  ★★★★★         ║│                         video area                         ││   Enter picks · or [create]                      │
+║   ✓ A001_C003.mov  ★★★★★         ║│                         video area                         ││   Enter picks · ↑↓ move · [create "sun"] if no match                      │
 ║   ✓ A001_C004.mov  ★★☆☆☆         ║│                 kitty / sixel if supported                 ││                                                  │
 ║ ▶ ○ A001_C005.mov                ║│                  else audio + status only                  ││ Rating    ★★★★☆    1-5 sets                      │
 ║   ○ A001_C006.mov                ║│                                                            ││ Slow motion   [x] 120 fps                        │
@@ -74,7 +76,7 @@ The screens show one moment: clip `A001_C005.mov` selected and the Tags field be
 ║   ✓ A001_C002.mov  ★★★☆☆  SM ║│                video area                ││   │ sunrise                        │     │
 ║   ✓ A001_C003.mov  ★★★★★     ║│        kitty / sixel if supported        ││   │ sunglasses                     │     │
 ║   ✓ A001_C004.mov  ★★☆☆☆     ║│         else audio + status only         ││   └────────────────────────────────┘     │
-║ ▶ ○ A001_C005.mov            ║│                                          ││   Enter picks · or [create]              │
+║ ▶ ○ A001_C005.mov            ║│                                          ││   Enter picks · ↑↓ move · [create "sun"] if no match              │
 ║   ○ A001_C006.mov            ║│                                          ││                                          │
 ║   ○ A001_C007.mov            ║│                                          ││ Rating    ★★★★☆    1-5 sets              │
 ║   ○ A001_C008.mov            ║│                                          ││ Slow motion   [x] 120 fps                │
@@ -115,7 +117,7 @@ The screens show one moment: clip `A001_C005.mov` selected and the Tags field be
 ║                                  ║│                                                            ││   │ sunrise                                │     │
 ║   ✓ A001_C001.mov  ★★★★☆         ║│                                                            ││   │ sunglasses                             │     │
 ║   ✓ A001_C002.mov  ★★★☆☆  SM     ║│                                                            ││   └────────────────────────────────────────┘     │
-║   ✓ A001_C003.mov  ★★★★★         ║│                         video area                         ││   Enter picks · or [create]                      │
+║   ✓ A001_C003.mov  ★★★★★         ║│                         video area                         ││   Enter picks · ↑↓ move · [create "sun"] if no match                      │
 ║   ✓ A001_C004.mov  ★★☆☆☆         ║│                 kitty / sixel if supported                 ││                                                  │
 ║ ▶ ○ A001_C005.mov                ║│                  else audio + status only                  ││ Rating    ★★★★☆    1-5 sets                      │
 ║   ○ A001_C006.mov                ║│                                                            ││ Slow motion   [x] 120 fps                        │
@@ -162,7 +164,7 @@ The screens show one moment: clip `A001_C005.mov` selected and the Tags field be
 ║   ✓ A001_C002.mov  ★★★☆☆  SM ║│                video area                ││   │ sunrise                        │     │
 ║   ✓ A001_C003.mov  ★★★★★     ║│        kitty / sixel if supported        ││   │ sunglasses                     │     │
 ║   ✓ A001_C004.mov  ★★☆☆☆     ║│         else audio + status only         ││   └────────────────────────────────┘     │
-║ ▶ ○ A001_C005.mov            ║│                                          ││   Enter picks · or [create]              │
+║ ▶ ○ A001_C005.mov            ║│                                          ││   Enter picks · ↑↓ move · [create "sun"] if no match              │
 ║   ○ A001_C006.mov            ║│                                          ││                                          │
 ║   ○ A001_C007.mov            ║│                                          ││ Rating    ★★★★☆    1-5 sets              │
 ║   ○ A001_C008.mov            ║│                                          ││ Slow motion   [x] 120 fps                │
