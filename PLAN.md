@@ -579,7 +579,7 @@ A **zmag** is a set of 4 drives in ZFS RAIDZ1 used for server-side cold storage.
 
 **Secondary screens** (opened by key, Esc returns to the main two-pane view)
 - `s` — Snapshots: ZFS snapshot list for the selected mag or zmag. List, hold, destroy (with confirm). Inspired by ZFS Commander’s snapshot pane.
-- `p` — Pool / drive health: status, scrub, replace drive, SMART. Inspired by zfleet’s pool inspector. Works for local pools and remote zmag stations.
+- `p` — Pool / drive health: status, scrub, replace drive, SMART. Inspired by zfleet’s pool inspector. Local pools only. Remote zmag stations are not managed this way.
 
 **On-zmag manifest**
 ```text
