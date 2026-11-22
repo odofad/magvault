@@ -314,7 +314,7 @@ Logs live in files under the `logs/` path (from path.conf). They are never writt
 - Newest first.
 - Filter by module (ingest, encoder, zmag, library, logging, …) or by level.
 - Detail pane shows the full selected line plus any multi-line context that follows it.
-- Optional follow / tail mode (`f`) that keeps the view at the bottom as new lines arrive.
+- Optional follow / tail mode (`f`). The list stays newest-first. Follow keeps the selection on the newest entry (top of the list) and scrolls as new lines arrive.
 
 ### Retention
 - Setting in `magvault.conf`: `log_retention_days`.
