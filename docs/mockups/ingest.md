@@ -52,8 +52,9 @@ Source of truth for behaviour is `PLAN.md` (ingest flow, mag rules, targets). Th
 ┌─ 5 Targets ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ [x] Local staging   /tmp/magvault-staging           writable                                                                                       │
 │ [x] Server          server:/mags                    reachable                                                                                      │
-│ [ ] USB backup      /media/odofad/BACKUP1 (master)  connected · not selected                                                                       │
-│ [!] USB backup is designated as master. Ensure it is connected and writable before ingest.                                                         │
+│ [ ] USB backup      /media/odofad/BACKUP1 (master)  valid · connected · pending · not selected                                                     │
+│ [ ] USB backup      /media/odofad/NEW_64            not valid · [ o Prepare ]                                                                      │
+│ [!] Prepare needs sudo. Disabled while pending sync mags remain. Valid drives stay selectable.                                                     │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌─ Log ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ card detected   /dev/sdd1 · FAT32 · 64 GB                                                                                                          │
@@ -99,7 +100,7 @@ Source of truth for behaviour is `PLAN.md` (ingest flow, mag rules, targets). Th
 ┌─ 5 Targets ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ [x] Local staging   /tmp/magvault-staging           █████░░░░░░░ 43%                                                                               │
 │ [x] Server          server:/mags                    queued · waits for staging                                                                     │
-│ [ ] USB backup      /media/odofad/BACKUP1 (master)  not selected                                                                                   │
+│ [ ] USB backup      /media/odofad/BACKUP1 (master)  valid · pending · not selected                                                                 │
 │ [!] Unsafe until verified. Keep the card inserted until hashes match.                                                                              │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌─ Log ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -146,8 +147,9 @@ Source of truth for behaviour is `PLAN.md` (ingest flow, mag rules, targets). Th
 ┌─ 5 Targets ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ [x] Local staging   /tmp/magvault-staging           writable                                                         │
 │ [x] Server          server:/mags                    reachable                                                        │
-│ [ ] USB backup      /media/odofad/BACKUP1 (master)  connected · not selected                                         │
-│ [!] USB backup is designated as master. Ensure it is connected and writable before ingest.                           │
+│ [ ] USB backup      /media/odofad/BACKUP1 (master)  valid · pending · not selected                                   │
+│ [ ] USB backup      /media/odofad/NEW_64            not valid · [o Prepare]                                          │
+│ [!] Prepare: sudo required. Blocked if pending sync.                                                                 │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  Tab pane  ·  ↑↓ move  ·  Enter pick  ·  n new project  ·  r rescan  ·  p PULL  ·  click pane to focus  ·  q quit
 ```
@@ -176,7 +178,7 @@ Below 120x36, show a "resize terminal" message instead of a broken layout.
 | 2 | Files | tree view (e.g. `tui-tree-widget`) or `Paragraph` | Read-only preview of the probed card. Junk (e.g. `.DS_Store`) is marked skipped and never copied. |
 | 3 | Project | popup `List` over `Clear` | Lists **open** projects only. `n` creates a project; UUID assigned on create. |
 | 4 | Details | field rows + popup pickers | Camera, format, gamma, gamut come from existing profiles only. No "add new" here; new profiles belong in the admin Profile Editor. Shoot day is guessed, operator confirms. Notes optional. |
-| 5 | Targets | checkbox `List` | Local staging, server, USB backup. Warning line when the USB drive is master or no backup/server sync is confirmed. |
+| 5 | Targets | checkbox `List` | Local staging, server, USB backups. Only valid (has magvault-backup.txt) can be selected. Not-valid show Prepare. Warning for master/pending/no sync. |
 | - | Ingest bar | `Gauge` + stage line | `p` starts the pull. Shows destination `mags/<YYYYMMDD>_<mag-uuid>`. |
 | - | Log | `List` | Shown only when there are spare rows (40+). Events for this ingest. |
 
@@ -189,7 +191,8 @@ Below 120x36, show a "resize terminal" message instead of a broken layout.
 | `Enter` | Open picker or confirm field |
 | `n` | New project |
 | `r` | Rescan for cards |
-| `p` | Pull (disabled until the confirm checklist is complete) |
+| `p` | Pull (start verified copy; disabled until confirm checklist complete) |
+| `o` | Prepare selected not-valid USB (sudo password prompt) |
 | `x` | Abort (pulling state only) |
 | `l` | Show log (overlay at 120x36, strip at 150x42) |
 | `q` | Quit (blocked while a copy is writing) |
@@ -200,4 +203,7 @@ Below 120x36, show a "resize terminal" message instead of a broken layout.
 - **Pipeline stages** match `PLAN.md`: copy and hash, verify destination, write `magcard.txt` and ASC MHL, record in database, queue 320p proxies.
 - **Unsafe until verified.** The card must stay inserted until hashes match.
 - **Inputs lock** during a pull. Panes 1-4 dim and ignore keys.
+- **USB validity:** only drives with a valid `magvault-backup.txt` at root can be selected as backup targets. Others are “not valid” and offer Prepare.
+- **Prepare:** requires system sudo password as confirmation. Nothing is written until accepted. Disabled while the drive has any mags marked pending server sync. Re-enabled only after all are synced. Valid drives with pending remain selectable; they just cannot be re-prepared.
+- **Pull** is the single action that starts the verified copy into the mag folder (then magcard + MHL + DB + queue). No separate “populate” step.
 - Sample values (A7S III, ProRes RAW, ACME_Campaign_2025, sizes, percentages) are placeholders.
