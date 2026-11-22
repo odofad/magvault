@@ -294,6 +294,22 @@ container: mp4
 - `rate_control` + either `crf` or `bitrate`
 - `audio_codec`
 
+
+## Logs module
+
+Logs live in files under the `logs/` path (from path.conf). They are never written to the database.
+
+- One file per day, or rotated files, plain text.
+- Viewer shows newest first.
+- Filter by module (Ingest, Encoder, Zmag, Library, …) or by level (info / warn / error).
+- Detail pane for the selected entry.
+- Optional follow / tail mode for live logs.
+
+**Retention**
+- History length is a setting in `magvault.conf`.
+- Default: 30 days.
+- Older log files are pruned.
+
 ## Settings module
 
 Admin-only on the server. Client shows only client-relevant settings.
