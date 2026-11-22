@@ -799,7 +799,11 @@ A **zmag** is a set of 4 drives in ZFS RAIDZ1 used for server-side cold storage.
 - Two-pane (or multi-pane) view: left = online server mags (filterable by project), right = contents of the selected zmag.
 - Copy is whole-mag only.
 - Copies use `rsync` behind the scenes (whole mag directory). Progress is shown in the operations strip.
-- Auto-backup: insert first zmag → copy everything that needs a first copy; insert second → copy everything that needs a second copy.
+- Role is chosen at creation (primary or backup).
+- Auto-backup fills the chosen role:
+  - A primary zmag receives mags that do not yet have a primary copy.
+  - A backup zmag receives mags that do not yet have a backup copy.
+- A mag has its first copy when it is on at least one primary zmag, and its second copy when it is on at least one backup zmag.
 
 **Eject**
 - `x` or an eject action runs `sudo zpool export` on the selected zmag (password required).
