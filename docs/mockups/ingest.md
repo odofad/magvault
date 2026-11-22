@@ -62,7 +62,7 @@ Source of truth for behaviour is `PLAN.md` (ingest flow, mag rules, targets). Th
 │ guessed         Sony A7S III · ProRes RAW · A7SIII S-Log3 · 2025-05-20                                                                             │
 │ waiting         confirm details, then p to pull                                                                                                    │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- Tab pane  ·  ↑↓ move  ·  Enter pick  ·  n new project  ·  r rescan  ·  p PULL  ·  click pane to focus  ·  q quit
+ Tab pane  ·  ↑↓ move  ·  Enter pick  ·  n new project  ·  r rescan  ·  p PULL  ·  click pane to focus  ·  Esc dashboard
 ```
 
 ## Comfortable size, 150x42 (pulling state, inputs locked)
@@ -109,7 +109,7 @@ Source of truth for behaviour is `PLAN.md` (ingest flow, mag rules, targets). Th
 │ next            verify, magcard.txt + ascmhl/, database, 320p queue                                                                                │
 │ locked          details and project cannot change until commit                                                                                     │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- x abort ingest  ·  l log  ·  inputs locked until verified
+ x abort ingest  ·  l log  ·  Esc dashboard  ·  inputs locked until verified
 ```
 
 ## Minimum size, 120x36 (ready state)
@@ -151,7 +151,7 @@ Source of truth for behaviour is `PLAN.md` (ingest flow, mag rules, targets). Th
 │ [ ] USB backup      /media/odofad/NEW_64            not valid · [o Prepare]                                          │
 │ [!] Prepare: sudo required. Blocked if pending sync.                                                                 │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- Tab pane  ·  ↑↓ move  ·  Enter pick  ·  n new project  ·  r rescan  ·  p PULL  ·  click pane to focus  ·  q quit
+ Tab pane  ·  ↑↓ move  ·  Enter pick  ·  n new project  ·  r rescan  ·  p PULL  ·  click pane to focus  ·  Esc dashboard
 ```
 
 ## How the layout flexes
@@ -195,7 +195,7 @@ Below 120x36, show a "resize terminal" message instead of a broken layout.
 | `o` | Prepare selected not-valid USB (sudo password prompt) |
 | `x` | Abort (pulling state only) |
 | `l` | Show log (overlay at 120x36, strip at 150x42) |
-| `q` | Quit (blocked while a copy is writing) |
+| `Esc` | Return to dashboard (blocked while a copy is writing) |
 
 ## Behaviour notes
 
