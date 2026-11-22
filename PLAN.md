@@ -152,6 +152,31 @@ Applies to all fields: camera, format, gamma, gamut, project assignment, manifes
 
 Per-file shot logging is not part of ingest.
 
+## Client ingest and field backups
+
+Ingest can run on a client terminal (or standalone machine). After a successful commit the server owns the rest of the pipeline (proxy encode, etc.).
+
+**Copy options (selectable on the main ingest screen)**
+- Default: card → local staging → rsync to server → server confirms → autoclean staging.
+- Backup USB drive can act as the staging location itself.
+- Direct card → server (optional).
+- Extra mirror to one or more backup drives at any time.
+- Warning shown when no backup exists and server sync is not yet confirmed.
+
+**Field backup drives**
+- Whole drive can be dedicated.
+- Gets `magvault-backup.txt` at the root:
+  - `role: master` or `slave`
+  - label, created time, host
+  - list of mag folders and whether each is pending server sync or already synced
+- Same mag-folder layout as the server + original files + `magcard.txt` (with SHA-256).
+- When mounted, client lists projects/mags/free space the same way the server view does.
+- Operator can reconnect the drive later and finish “sync pending to server.”
+- Checksums live in the mag cards, so verification works on any filesystem.
+- Encryption is handled at the OS level if desired (not by Magvault).
+
+All targets and states are visible and choosable on the ingest screen.
+
 ## Proxies
 
 - `proxies/db/` — always-on 320p library proxies. Same folder naming as mags.
@@ -207,6 +232,26 @@ When clips are added:
 1. Copy current exportcard.txt to exportcard.txt.backup (overwrite any previous backup).
 2. Write updated card with new clip list and refreshed updated timestamp.
 
+## Cold storage – zmags
+
+A **zmag** is a set of 4 drives in ZFS RAIDZ1 used for server-side cold storage. There is also a **backup zmag** (second RAIDZ1 set).
+
+Zmags are distinct from field USB backups. The server backup module uses the same copy/verify/manifest pattern, but targets are zmags.
+
+- Placement is flexible: a backup zmag does not have to mirror the first exactly. Different mags can live on different zmags for space efficiency.
+- Database tracks every placement:
+  - mag UUID
+  - which zmag
+  - copy number (1st, 2nd, …)
+  - date written
+  - status (verified, pending, etc.)
+- On-zmag manifest also exists at a known location so each set remains self-describing if the database is unavailable.
+- Backup manager shows copy count per mag:
+  - zero copies → “not backed up”
+  - one copy → “single copy”
+  - two or more → “redundant”
+  and where the existing copies live.
+
 ## Telemetry
 
 Live dashboard numbers live in a RAM-backed file (tmpfs or /dev/shm) so frequent updates cause no disk wear. A periodic copy (default every 30 minutes) is written to disk for reboot survival or light history.
@@ -234,7 +279,7 @@ Readable without root. Client dashboard (or any SSH session) simply reads the fi
 
 - Phase 1: whole-mag rsync backup + query views.
 - Phase 2: 320p library browser + request layer + bin export.
-- Phase 3: wrangler cold-storage pull and reingest.
+- Phase 3: wrangler cold-storage pull and reingest. Zmag backup manager.
 - Phase 4: optional egui/Vulkan desktop layer + boot-to-app image. Split function.
 - Phase 5: polish, packaging. HQ proxy toggles.
 
