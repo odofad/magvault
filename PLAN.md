@@ -246,16 +246,16 @@ Separate from ingest. Per-clip (or per-asset) logging. Original filenames and si
 
 | Field | Type | Behaviour |
 |-------|------|-----------|
-| Description | Short free text | What is happening |
-| Keywords / Tags | Clickable + add-new | Pick from existing list; type once to add a new tag (then becomes clickable for everyone) |
+| Description | Short free text | What is happening. Drawn as a real text field (border, cursor, placeholder when empty). |
+| Keywords / Tags | Type then click | Type in the field; matching tags pop up. Click (or Enter) to add. If no match, offer “[create ‘…’]” once. No permanent picker pane. |
 | Rating | Stars (1–5) | |
 | Slow motion | Tick | Checkbox |
-| Technical note | Optional short text | Audio, focus, exposure, etc. |
-| Shot type | Optional clickable | Wide / medium / close / aerial… (same clickable pattern) |
-| Camera operator | Clickable + add-new | Pick or add name |
-| Director / Producer | Clickable + add-new | Pick or add name |
+| Technical note | Optional short text | Audio, focus, exposure, etc. Drawn as a real text field. |
+| Shot type | Optional clickable | Wide / medium / close / aerial… |
+| Camera operator | Type then click | Same popup behaviour as tags. |
+| Director / Producer | Type then click | Same popup behaviour as tags. |
 
-Clickable lists avoid typos while remaining growable. Free-text fields stay free text.
+Free-text fields (Description, Technical note) must look like editable input boxes, not static display. Clickable / popup fields avoid typos while remaining growable.
 
 ## Dashboard (landing screen)
 
