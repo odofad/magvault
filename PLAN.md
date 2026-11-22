@@ -235,12 +235,27 @@ All targets and states are visible and choosable on the ingest screen.
 
 ## Logging module
 
-Separate from ingest. Per-clip (or per-asset) logging of descriptions, keywords, ratings, etc. Original filenames and sidecars stay untouched. Log data lives in the database (and can optionally be written into a sidecar or the mag card).
+Separate from ingest. Per-clip (or per-asset) logging. Original filenames and sidecars stay untouched. Log data lives in the database (and can optionally be written into a sidecar or the mag card).
 
 - Available on both **client** and **server**.
 - Client logging works against local staging, USB backups, or recently synced mags. Changes sync to the server database when connected. Offline logging is supported on local media.
 - Server logging has full access to all online mags.
 - Playback uses proxies (see Media playback). Camera raws are not opened for casual viewing.
+
+### Logging fields (locked)
+
+| Field | Type | Behaviour |
+|-------|------|-----------|
+| Description | Short free text | What is happening |
+| Keywords / Tags | Clickable + add-new | Pick from existing list; type once to add a new tag (then becomes clickable for everyone) |
+| Rating | Stars (1–5) | |
+| Slow motion | Tick | Checkbox |
+| Technical note | Optional short text | Audio, focus, exposure, etc. |
+| Shot type | Optional clickable | Wide / medium / close / aerial… (same clickable pattern) |
+| Camera operator | Clickable + add-new | Pick or add name |
+| Director / Producer | Clickable + add-new | Pick or add name |
+
+Clickable lists avoid typos while remaining growable. Free-text fields stay free text.
 
 ## Dashboard (landing screen)
 
