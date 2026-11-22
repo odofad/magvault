@@ -415,7 +415,7 @@ The dashboard is the first screen after launch. It shows status and is the way t
 
 **Client dashboard**
 - Thin status: server connection state (online/offline/syncing), simple queue depth number when connected, local USB/staging status.
-- Module menu: Ingest, Logging (local-capable), and the ability to open the full server dashboard over SSH.
+- Module menu: Ingest, Logging (local-capable), Library (local proxies + export requests), and the ability to open the full server dashboard over SSH.
 - Does **not** show full encoder progress or zmag drive health by default. Those stay on the server.
 - Local USB/staging and recent local activity are first-class.
 
