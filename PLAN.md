@@ -340,6 +340,16 @@ Logs live in files under the `logs/` path (from path.conf). They are never writt
 - System (startup, shutdown, errors)
 
 
+
+### Sudo helper
+
+All privileged operations go through one small root-owned helper.
+
+- The helper only allows the exact commands Magvault needs (zpool create/export/import, format, etc.).
+- `timestamp_timeout=0` — every call asks for the sudo password.
+- The Magvault user has no general sudo rights.
+- No root login.
+
 ## Settings module
 
 Admin-only on the server. Client shows only client-relevant settings.
