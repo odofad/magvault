@@ -84,12 +84,14 @@ No project folders on disk. All project relationships live in the database.
 - Split (later feature): creates new UUID folders. New shoot-day date is taken from the first file after the split point and confirmed by the operator. Original folder is updated or retired accordingly.
 - Whole folder remains self-describing if the database disappears.
 
-## SQLite schema (sketch)
+## SQLite schema
+
+Single file `db/magvault.sqlite`. Files on disk remain the source of truth for manifests; the database is the index.
 
 ### projects
 - id (UUID, primary key)
 - name (label only)
-- season_or_year (optional disambiguator)
+- season_or_year (optional)
 - notes
 - status (open / closed) — open projects appear in ingest; closed projects are hidden from ingest and only visible in the library
 - created_at, updated_at
@@ -98,26 +100,85 @@ No project folders on disk. All project relationships live in the database.
 - id (UUID, primary key)
 - project_id (UUID, foreign key, required)
 - dump_path
-- shoot_date (the YYYYMMDD used in the folder name)
-- camera_model (confirmed)
+- shoot_date (YYYYMMDD used in the folder name)
+- camera_profile_id (from .cam, or free text if no profile)
 - file_format (confirmed)
 - gamma (confirmed)
 - gamut (confirmed)
-- status (ingesting, online, cold, etc.)
+- status (ingesting, online, cold, archived, …)
+- logging_complete (boolean)
 - ingested_at
 - notes
 
-### assets (files inside a mag)
-- id
-- mag_id (UUID)
+### clips
+- id (UUID, primary key)
+- mag_id (UUID, foreign key)
 - original_filename
 - relative_path
 - size
 - checksum (SHA-256)
 - proxy_path (nullable)
-- later logging fields (description, etc.) can be added without schema pain
+- proxy_status (none / pending / ready / failed)
+- description
+- rating (1–5, nullable)
+- slow_motion (boolean)
+- technical_note
+- shot_type
+- camera_operator
+- director_producer
+- created_at, updated_at
 
-Projects and mags are identified by UUID. Names are labels.
+### clip_tags
+- clip_id (UUID)
+- tag (text)
+- primary key (clip_id, tag)
+
+### placements
+- id (UUID, primary key)
+- mag_id (UUID)
+- zmag_id (text, the zmag name)
+- copy_number (1, 2, …)
+- status (copying / complete / failed)
+- copied_at
+- notes
+
+### exports
+- id (UUID, primary key)
+- name (operator-assigned folder name)
+- project_id (UUID, nullable)
+- path (path to the export folder)
+- created_by
+- created_at, updated_at
+- notes
+
+### export_clips
+- export_id (UUID)
+- clip_id (UUID)
+- in_point (nullable)
+- out_point (nullable)
+- primary key (export_id, clip_id)
+
+### cold_pull_requests
+- id (UUID, primary key)
+- mag_id (UUID)
+- zmag_id (text)
+- requested_by
+- status (pending / pulling / complete / failed)
+- created_at, completed_at
+- notes
+
+### encoder_jobs
+- id (UUID, primary key)
+- mag_id (UUID, nullable)
+- clip_id (UUID, nullable)
+- profile_id (text)
+- status (queued / running / done / failed)
+- progress (0–100)
+- output_path
+- created_at, started_at, finished_at
+- error
+
+Projects, mags and clips are identified by UUID. Names are labels. The database can be rebuilt from the files on disk if it is lost.
 
 ## Project open / closed rule
 
