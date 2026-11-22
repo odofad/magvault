@@ -452,6 +452,16 @@ Module-specific actions use single letters. They must not collide with the share
 | `+` / `-` | Raise / lower priority |
 | `e` | Edit profiles (jump to Profile Editor) |
 
+### Profile Editor (admin only)
+| Key | Action |
+|-----|--------|
+| `n` | New profile |
+| `c` | Duplicate selected profile |
+| `x` | Delete selected profile (asks first) |
+| `r` | Reload from disk |
+| `Ctrl+S` | Save |
+| `Esc` | Return to dashboard. If there are unsaved changes, prompt “Discard changes?” |
+
 The dashboard is the landing screen. Every other module returns to it with `Esc`.
 
 ## Media playback
