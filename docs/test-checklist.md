@@ -7,7 +7,7 @@ Hardware for early testing:
 ## Both machines
 
 - [ ] Ubuntu 26.04
-- [ ] Packages: `build-essential pkg-config libssl-dev sqlite3 ffmpeg rsync zfsutils-linux openssh-server git curl`
+- [ ] Packages: `build-essential pkg-config libssl-dev libsqlite3-dev sqlite3 ffmpeg rsync zfsutils-linux openssh-server git curl`
 - [ ] Rust via rustup
 - [ ] Users created:
   - Server: `magvault` (disabled password)
@@ -54,7 +54,8 @@ Hardware for early testing:
 - [ ] SQLite schema is created
 - [ ] Ingest a test folder:
   - [ ] Mag folder created as `<YYYYMMDD>_<full-uuid>`
-  - [ ] SHA-256 hashes present in magcard and ASC MHL
+  - [ ] SHA-256 hashes present in magcard and database
+  - [ ] ASC MHL contains C4 hashes (ASC MHL 1.0 does not support SHA-256)
   - [ ] Database has mag and clip rows
   - [ ] 320p job record exists
 - [ ] Conflict test: change metadata, confirm old magcard is backed up to `.magvault/` and new card matches database
