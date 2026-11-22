@@ -14,7 +14,7 @@ All roots are configurable. The program is pointed at a config directory (via ar
 
 ```text
 config/                            # location supplied at startup
-  path.conf                        # all roots only: mags, proxies, bins, db, logs, ...
+  path.conf                        # all roots only: mags, proxies, bins, db, logs, telemetry_live, telemetry_disk, ...
   magvault.conf                    # non-path settings
   encoding.conf                    # ffmpeg presets and proxy rules
   ...                              # additional files as needed
@@ -38,7 +38,11 @@ proxies/
       <proxy files>
 
 bins/                             # configured path, outside magvault tree by default
-  <request-or-user-id>/
+  <operator-assigned-name>/        # export folder
+    exportcard.txt
+    exportcard.txt.backup          # single previous version
+    <YYYYMMDD>_<mag-uuid>/         # original mag folder name
+      <copied original clips + sidecars>
 
 logs/
 ```
@@ -161,9 +165,60 @@ Per-file shot logging is not part of ingest.
 - Frame rate must match the source exactly. No conversion, no pulldown, no approximation.
 - Audio channels must never be downmixed. Channel count and layout stay identical to source. Codec or container may change; channels may not be collapsed.
 
-## Bins
+## Export bins (locked)
 
-Path configured in path.conf. Default suggestion outside the magvault tree (e.g. separate ZFS dataset). Program only writes exported bin folders to the configured path.
+Path configured in path.conf. Default suggestion outside the magvault tree (e.g. separate ZFS dataset).
+
+Each export is a folder whose name is assigned by the operator at creation time.
+
+```text
+bins/
+  <operator-assigned-name>/
+    exportcard.txt
+    exportcard.txt.backup          # single previous version only
+    <YYYYMMDD>_<mag-uuid>/         # original mag folder name, recreated
+      <original clip names + sidecars>   # copied, never linked
+```
+
+- Only original media and matching sidecars. No proxies of any kind.
+- Copies, not symlinks or hardlinks. Space saving left to ZFS dedup or the operator.
+- Folder names and clip names are immutable and match the originals.
+- Multiple source mags produce multiple original-named subfolders.
+- Magvault discovers exports by walking the bins path and reading the cards. Folders are the record; a full export table in the database is optional.
+
+### exportcard.txt
+
+```text
+name: Bamba-Cutaways
+project_uuid: ...
+project_name: ...
+created: 2026-11-22T14:30:00
+created_by: odofad
+updated: 2026-11-22T16:15:00
+notes: ...
+
+# clips
+# mag_folder | original_filename | source_path | optional_in | optional_out
+20261118_abc123… | clip001.MOV | /mags/.../clip001.MOV | 00:01:12 | 00:01:45
+...
+```
+
+When clips are added:
+1. Copy current exportcard.txt to exportcard.txt.backup (overwrite any previous backup).
+2. Write updated card with new clip list and refreshed updated timestamp.
+
+## Telemetry
+
+Live dashboard numbers live in a RAM-backed file (tmpfs or /dev/shm) so frequent updates cause no disk wear. A periodic copy (default every 30 minutes) is written to disk for reboot survival or light history.
+
+Both paths are in path.conf:
+
+```text
+telemetry_live=/dev/shm/magvault-telemetry.json
+telemetry_disk=logs/telemetry-latest.json
+```
+
+Readable without root. Client dashboard (or any SSH session) simply reads the file. Persistent history, if wanted, is a separate less-frequent log.
 
 ## Phase 0 – done when
 
@@ -197,3 +252,4 @@ See NOTES.md. Main ones in use:
 - ASC MHL alongside mag card or not.
 - Automatic card discovery vs manual path.
 - Details of the later split UI and how the original folder is retired.
+- Dashboard client that reads the telemetry file.
