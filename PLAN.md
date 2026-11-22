@@ -1,4 +1,13 @@
 
+
+### Hashing
+
+SHA-256 is computed at ingest, while the card is first read.
+
+- Hashes are written into the ASC MHL and the magcard.
+- Every later copy (USB backup, rsync to server, rsync to zmag) is verified against those stored hashes.
+- A mismatch is an integrity error and is reported. The copy is not committed.
+
 ## Copy method
 
 All file copies in Magvault use `rsync` (whole directory or file as appropriate). This includes:
