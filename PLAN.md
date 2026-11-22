@@ -719,6 +719,16 @@ When clips are added:
 1. Copy current exportcard.txt to exportcard.txt.backup (overwrite any previous backup).
 2. Write updated card with new clip list and refreshed updated timestamp.
 
+### Export bins browser
+
+Read-only viewer for existing exports.
+
+- List of export folders under `bins/` (name, project, date, status).
+- Open one → show the export card (clips, optional in/out) and the on-disk files.
+- Status per clip or per export: warm / cold / copying / done.
+- No editing and no delete in this screen.
+- Shortcut (`e` or `l`) jumps to the Library module with this export open for editing.
+
 ## Zmag manager
 
 A **zmag** is a set of 4 drives in ZFS RAIDZ1 used for server-side cold storage.
