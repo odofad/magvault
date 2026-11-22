@@ -155,7 +155,10 @@ magvault ALL=(root) /usr/sbin/zpool, /usr/sbin/zfs
 
 Magvault calls `sudo zpool` / `sudo zfs` when it needs to create, import, export or manage a zmag.  
 The operator must enter the sudo password. Nothing is executed until the password is accepted.  
-Clients (`magvaultclient`) have no sudo rights.  
+Clients (`magvaultclient`) have no sudo rights on the server.
+
+On a client machine the `magvaultclient` user may be given limited, password-required sudo for local USB-prepare commands only (mount, write manifest, etc.).  
+This sudo is local to the client machine and does not grant any rights on the server.  
 All other Magvault operations run unprivileged.
 
 ## Mag card format
