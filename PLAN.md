@@ -166,6 +166,62 @@ notes: Full-frame cinema camera. S-Log3 + S-Gamut3.Cine is the usual pair.
 - Required minimum: `name`, `id`, `file_formats` + `default_format`, `gamma` + `default_gamma`, `gamut` + `default_gamut`.
 - Ingest only offers the values listed in the matching profile.
 
+## Encoder profiles
+
+Plain-text files, one per profile. Live in a folder configured in path.conf (e.g. `encoders/`). Filename is `<id>.enc`.
+
+Distilled from common ffmpeg preset tools, restricted by Magvault’s locked proxy rules.
+
+```text
+# Magvault encoder profile
+name: default-320p
+id: default-320p
+type: 320p          # 320p | hq | custom
+
+# Video
+codec: libx264
+height: 320         # width calculated to preserve aspect; "source" = no resize
+rate_control: crf   # crf | bitrate
+crf: 23
+preset: veryfast
+
+# Audio
+audio_codec: aac
+audio_bitrate: 128k
+# audio_channels is always source — not stored, not editable
+
+# Container
+container: mp4
+
+notes: Library proxy. Always queued after ingest.
+```
+
+**HQ example**
+```text
+name: hevc-hq
+id: hevc-hq
+type: hq
+codec: libx265
+height: source
+rate_control: bitrate
+bitrate: 40M
+preset: medium
+audio_codec: aac
+audio_bitrate: 192k
+container: mp4
+```
+
+**Rules enforced at encode time (not editable)**
+- Aspect ratio preserved.
+- Frame rate = source exactly.
+- Audio channels = source exactly (no downmix).
+
+**Required minimum**
+- `name`, `id`, `type`
+- `codec`, `height`
+- `rate_control` + either `crf` or `bitrate`
+- `audio_codec`
+
 ## Profile Editor module
 
 Single admin-only module that owns creation, editing, duplication and deletion of every profile type:
