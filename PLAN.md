@@ -772,10 +772,26 @@ Identity lives in the manifest and database, not in a UUID name.
 - Driven by requests from the library/export side.
 - Wrangler docks the correct zmag (local or remote); manager copies requested mags back to the server.
 
-**Key module**
-- Manages Magvault SSH key pairs.
-- Installs public keys to clients or remote stations.
-- No passwords. Security is SSH keys + normal Unix permissions on the paths.
+**Key module** (admin only)
+
+Two ways to add a client:
+
+1. **Generate on server**
+   - Admin generates a key pair in the Key module.
+   - Public key is added to `~magvaultclient/.ssh/authorized_keys`.
+   - Private key is shown once (or written to a file) for the admin to copy to the client by hand (USB, secure paste, etc.).
+   - Client never connects until it already has the private key.
+
+2. **Accept a client public key**
+   - Client generates its own key pair.
+   - Admin copies the public key (USB, paste) and adds it via the Key module.
+   - Public key is added to `~magvaultclient/.ssh/authorized_keys`.
+
+Both keep the admin as the only person who can grant access. No self-service enrollment.
+
+The module lists existing keys, shows which client they belong to, and can revoke a key (remove from authorized_keys).
+
+Private keys generated on the server are not stored long-term after they have been handed over. Only the public keys and a label (client name) are kept.
 
 Database tracks every placement (mag UUID, zmag id, copy number, date, status). Backup view shows which mags have zero, one, or two-plus copies.
 
