@@ -241,25 +241,52 @@ When clips are added:
 1. Copy current exportcard.txt to exportcard.txt.backup (overwrite any previous backup).
 2. Write updated card with new clip list and refreshed updated timestamp.
 
-## Cold storage – zmags
+## Zmag manager
 
-A **zmag** is a set of 4 drives in ZFS RAIDZ1 used for server-side cold storage. There is also a **backup zmag** (second RAIDZ1 set).
+A **zmag** is a set of 4 drives in ZFS RAIDZ1 used for server-side cold storage.
 
-Zmags are distinct from field USB backups. The server backup module uses the same copy/verify/manifest pattern, but targets are zmags.
+**Creation**
+- Operator selects four raw drives.
+- Command creates the pool with:
+  - `recordsize=1M`
+  - `compression=lz4`
+  - `atime=off`
+  - `magvault:type=zmag`
+  - human name `zmag-01`, `zmag-02`, …
+- Only pools with that property (or matching name pattern) are ever imported or mounted. All other zpools are ignored.
 
-- Placement is flexible: a backup zmag does not have to mirror the first exactly. Different mags can live on different zmags for space efficiency.
-- Database tracks every placement:
-  - mag UUID
-  - which zmag
-  - copy number (1st, 2nd, …)
-  - date written
-  - status (verified, pending, etc.)
-- On-zmag manifest also exists at a known location so each set remains self-describing if the database is unavailable.
-- Backup manager shows copy count per mag:
-  - zero copies → “not backed up”
-  - one copy → “single copy”
-  - two or more → “redundant”
-  and where the existing copies live.
+**Local operation**
+- Plug in drives → zmag manager auto-imports and mounts only recognised zmags.
+- Multiple zmags may be mounted simultaneously.
+- Two-pane (or multi-pane) view: left = online server mags (filterable by project), right = contents of the selected zmag.
+- Copy is whole-mag only.
+- Auto-backup: insert first zmag → copy everything that needs a first copy; insert second → copy everything that needs a second copy.
+
+**On-zmag manifest**
+```text
+id: zmag-01
+role: primary   # or backup
+created: ...
+# list of mag UUIDs
+```
+Identity lives in the manifest and database, not in a UUID name.
+
+**Remote zmag station**
+- A second server can run the same zmag manager.
+- Connects over SSH (keys only).
+- Reports its zmags, receives copy/restore jobs, performs transfers locally, updates the central database.
+- Appears to the operator as additional zmags.
+
+**Cold pull**
+- Driven by requests from the library/export side.
+- Wrangler docks the correct zmag (local or remote); manager copies requested mags back to the server.
+
+**Key module**
+- Manages Magvault SSH key pairs.
+- Installs public keys to clients or remote stations.
+- No passwords. Security is SSH keys + normal Unix permissions on the paths.
+
+Database tracks every placement (mag UUID, zmag id, copy number, date, status). Backup view shows which mags have zero, one, or two-plus copies.
 
 ## Telemetry
 
@@ -274,7 +301,9 @@ telemetry_disk=logs/telemetry-latest.json
 
 Readable without root. Client dashboard (or any SSH session) simply reads the file. Persistent history, if wanted, is a separate less-frequent log.
 
-The dashboard must show encoder queue depth and per-job progress (which mag/asset is encoding, percent or frame count, ETA if available).
+The dashboard must show:
+- Encoder queue depth and per-job progress.
+- Zpool health for every mounted zmag (overall state + any non-ONLINE drives) so failing disks are visible.
 
 ## Phase 0 – done when
 
@@ -290,7 +319,7 @@ The dashboard must show encoder queue depth and per-job progress (which mag/asse
 
 - Phase 1: whole-mag rsync backup + query views.
 - Phase 2: 320p library browser + request layer + bin export.
-- Phase 3: wrangler cold-storage pull and reingest. Zmag backup manager.
+- Phase 3: wrangler cold-storage pull and reingest. Zmag manager.
 - Phase 4: optional egui/Vulkan desktop layer + boot-to-app image. Split function.
 - Phase 5: polish, packaging. HQ proxy toggles.
 
@@ -305,4 +334,4 @@ See NOTES.md. Main ones in use:
 
 - Exact terminal UI for confirmation (plain prompts vs ratatui).
 - Details of the later split UI and how the original folder is retired.
-- Dashboard client that reads the telemetry file (including encoder queue).
+- Dashboard client that reads the telemetry file (including encoder queue and zpool health).
