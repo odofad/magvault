@@ -70,6 +70,7 @@ No project folders on disk. All project relationships live in the database.
 - name (label only)
 - season_or_year (optional disambiguator)
 - notes
+- status (open / closed) — open projects appear in ingest; closed projects are hidden from ingest and only visible in the library
 - created_at, updated_at
 
 ### mags
@@ -96,6 +97,13 @@ No project folders on disk. All project relationships live in the database.
 - later logging fields (description, etc.) can be added without schema pain
 
 Projects and mags are identified by UUID. Names are labels.
+
+## Project open / closed rule
+
+- **Open** projects can receive new mags and are shown in the ingest project list.
+- **Closed** projects are finished (typically moved toward cold storage). They are hidden from ingest and only appear in the library.
+- Closing or re-opening a project is a deliberate action. It only changes the flag; files on disk never move.
+- Default view everywhere except the library shows only open projects.
 
 ## Mag card format
 
@@ -147,7 +155,7 @@ Applies to all fields: camera, format, gamma, gamut, project assignment, manifes
 3. Present guesses and file list to operator.
 4. Operator:
    - Confirms or corrects camera model, file format, gamma, gamut, and shoot day.
-   - Assigns to an existing project (select from list) or creates a new project (UUID assigned immediately).
+   - Assigns to an existing **open** project (select from list) or creates a new project (UUID assigned immediately, status open).
    - Adds any mag-level notes.
 5. System performs verified copy into `mags/<shootday>_<new-mag-uuid>/`:
    - Exact card contents, original filenames and sidecars preserved.
