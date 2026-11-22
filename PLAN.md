@@ -275,7 +275,34 @@ One set of navigation keys for every screen. Defined once so modules stay consis
 | `Enter` | Confirm, open, or select the current item |
 | Mouse | Optional. Click a pane to focus it. |
 
-Module-specific actions use single letters (`p` pull, `n` new, `r` rescan/retry, `o` prepare, `x` abort, `e` edit profiles, etc.). They are listed in each module’s mockup and must not collide with the shared keys above.
+Module-specific actions use single letters. They must not collide with the shared keys above.
+
+### Dashboard
+| Key | Action |
+|-----|--------|
+| letter | Open module (`i` Ingest, `g` Logging, `l` Library, `e` Export bins, `z` Zmag, `p` Profile Editor, `v` Logs, `s` Settings) |
+| `r` | Refresh status |
+
+### Ingest
+| Key | Action |
+|-----|--------|
+| `n` | New project |
+| `r` | Rescan for cards |
+| `p` | Pull (start verified copy) |
+| `o` | Prepare selected not-valid USB (sudo) |
+| `x` | Abort (pulling state only) |
+| `l` | Show log |
+
+### Encoder
+| Key | Action |
+|-----|--------|
+| `n` | New job (ad-hoc to custom_encode/) |
+| `p` | Pause / resume queue |
+| `r` | Retry failed job |
+| `c` | Cancel job |
+| `u` | Re-queue job |
+| `+` / `-` | Raise / lower priority |
+| `e` | Edit profiles (jump to Profile Editor) |
 
 The dashboard is the landing screen. Every other module returns to it with `Esc`.
 
