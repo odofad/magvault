@@ -123,8 +123,48 @@ One plain-text `.cam` file per camera, all living in the `cameras/` folder (path
 - Valid files are loaded into the database / served to clients.
 - Clients never read the files directly. They request the current profile list from the server over SSH (or use a local folder when running standalone).
 - Ordinary operators on the ingest screen can only select from existing profiles. They cannot invent new camera, format, gamma or gamut names.
-- Exact fields inside a `.cam` file are still open (will be finalised later, same approach as the database schema).
 - A starter set of common cameras will be shipped.
+
+### `.cam` file schema (locked)
+
+Plain text. One file per profile. Filename is `<id>.cam`.
+
+```text
+# Magvault camera profile
+name: Sony A7S III
+id: sony-a7siii
+
+# Detection
+vendor: Sony
+model: A7S III
+card_layout: DCIM, PRIVATE
+filename_pattern: A001_C*.mov
+
+# Media
+file_formats: ProRes RAW, XAVC S, XAVC HS
+default_format: ProRes RAW
+
+gamma: S-Log3, S-Log2, S-Cinetone, Rec.709
+default_gamma: S-Log3
+
+gamut: S-Gamut3.Cine, S-Gamut3, Rec.709
+default_gamut: S-Gamut3.Cine
+
+# Optional technical hints
+typical_resolutions: 3840x2160, 1920x1080
+typical_fps: 24, 25, 30, 50, 60, 120
+audio_channels: 2, 4
+
+notes: Full-frame cinema camera. S-Log3 + S-Gamut3.Cine is the usual pair.
+```
+
+**Rules**
+- `name` and `id` required.
+- Lists are comma-separated.
+- `default_*` must be one of the listed values.
+- Unknown keys are ignored (forward compatible).
+- Required minimum: `name`, `id`, `file_formats` + `default_format`, `gamma` + `default_gamma`, `gamut` + `default_gamut`.
+- Ingest only offers the values listed in the matching profile.
 
 ## Profile Editor module
 
