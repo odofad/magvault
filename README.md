@@ -26,52 +26,46 @@ Projects are created as real records with a UUID (the stable identity). The name
 
 ## Mag card
 
-A plain-text file that stays inside the mag-dump folder forever. It is a complete manifest (every original filename, ideally with size/checksum) plus the confirmed technical metadata and project link. This keeps the dump identifiable even if it is separated from the system. The database holds the same information and does the day-to-day lifting.
+A plain-text file that stays inside the mag-dump folder forever. It is a complete manifest (every original filename, ideally with size/checksum) plus the confirmed technical metadata and project link. This keeps the dump identifiable even if it is separated from the system. The database holds the same information and does the day-to-day lifting. An ASC MHL inventory is also written by default for interoperability.
 
 ## Conflict handling
 
-Database is authoritative. When a mismatch is detected (for example a cold mag reappears with a stale card), the old mag card is copied to `*.datechanged.backup` and a fresh card is written from the database. This applies to all fields: camera model, file format, gamma, gamut, project assignment, manifest, notes, everything.
+Database is authoritative. When a mismatch is detected (for example a cold mag reappears with a stale card), the old mag card is copied to a dated backup and a fresh card is written from the database. This applies to all fields.
 
 ## What it does
 
-1. **Ingest** — Operator plugs in the physical mag (SD/USB) or points at the mount. System probes the card directly and auto-detects what it can (camera model, format, gamma, gamut, full file list). Operator confirms/corrects the technical fields and assigns the mag to an existing project (or creates a new one). Only then is the media copied into a new mag-dump folder (original names preserved). The mag receives its own UUID. A complete-manifest mag card is written into the folder and the same data goes into the database. Per-file shot logging is not done here; it can happen later while viewing the proxies, in a dedicated pass, or with future ML.
-
-2. **Database + proxy subsystem** — SQLite for projects, mags (with UUIDs), assets, locations, jobs, proxies. Generates tiny 320p versions of everything so people can browse and scrub without touching originals.
-
-3. **Whole-mag mover / backup** — Treats complete raw mags as units. rsync wrapper that logs source, destination, checksum, and success. No timecodes, no partial clips.
-
-4. **Low-res library + request layer** — Search and watch 320p proxies. Mark what you want and pull a request. If online, drops a bin folder on the SMB share. If cold, creates a pull request.
-
-5. **Cold-storage pull and reingest** — Separate workflow for the wrangler in the server room. They see open requests, grab the physical mag, reingest the needed files, verify checksums, mark online. The bin then gets populated. Conflict handling applies if the card on the mag is stale.
-
-6. **Planning / selection tool** — Scrub 320p proxies, mark ranges or whole clips, hit export. Does not cut or render. Only requests those clips (triggering a cold pull if needed) and, once available, writes a bin folder on the SMB share containing the clips (or links) plus a simple manifest/EDL. Open it in any NLE.
-
-7. **Dashboard** — Terminal (or optional GUI) overview: mags online vs cold, proxy coverage, open pull requests, recent ingests, disk space, exported bins. Just queries the SQLite file and directories.
-
-Server and client can both run the GUI if wanted. Proxies move over SSH/rsync for remote preview. The raw archive stays put until someone asks for specific clips.
+1. **Ingest** — Probe card, operator confirms technical metadata and assigns project, verified full-card copy, mag card + ASC MHL, queue proxies on server.
+2. **Client field backups** — Staging, USB master/slave drives, reconnect-and-sync.
+3. **Proxies** — 320p library + optional HQ, strict frame-rate and audio rules, server-side queue.
+4. **Export bins** — Named folders of original clips only, export card, no proxies.
+5. **Zmag manager** — 4-drive RAIDZ1 cold storage sets, auto-mount, two-pane copy, remote stations, cold pull.
+6. **Dashboard** — Telemetry file (encoder queue, zpool health) readable over SSH.
 
 ## Roadmap
 
-**Phase 0 – Skeleton (ingest first)**  
-SQLite schema (projects with UUID, mags with UUID, assets). Directory layout for mag dumps. Probe-and-confirm ingest from physical cards: auto-detect, operator confirmation of camera/format/gamma/gamut, project assignment, verified copy with original names, complete-manifest mag card, database record. Basic 320p proxy generation. Usable from the shell.
+**Phase 0 – Foundation**  
+Config system, schema, manual-path verified ingest, mag card + ASC MHL, queue 320p, conflict handling. Shell only.
 
-**Phase 1 – Whole-mag backup and basic query**  
-rsync wrapper for complete mags, logging into the database. Terminal views to list mags, locations, projects, and query assets. Conflict detection on mount/copy.
+**Phase 1 – Client ingest & field backups**  
+Card discovery, full client copy options, USB backup drives with manifests, reconnect-and-sync.
 
-**Phase 2 – Library and requests**  
-320p generation for the library, terminal browser, mark clips and create pull requests. Write bin folders on the SMB share when media is online.
+**Phase 2 – Proxy subsystem & telemetry**  
+Server encode queue, proxy rules, live telemetry file, minimal dashboard.
 
-**Phase 3 – Wrangler pull/reingest**  
-Terminal tools for open requests. Targeted reingest from physical mags, checksum verify, mark online, finish the bin. Apply conflict handling when cards are stale.
+**Phase 3 – Export bins & library requests**  
+Named export folders, clip selection, cold-pull requests.
 
-**Phase 4 – Optional desktop layer**  
-egui + wgpu/Vulkan front-end that performs the same operations on the same files. Minimal boot-to-Magvault image for server-room terminals.
+**Phase 4 – Zmag manager (local)**  
+Create/mount zmags, two-pane backup terminal, auto-backup, placement tracking, zpool health.
 
-**Phase 5 – Polish**  
-Dashboard numbers, robust proxy rules, fuller conflict and failure handling, packaging for Ubuntu 26.04+.
+**Phase 5 – Remote zmag + key module + cold pull**  
+SSH keys, remote stations, full restore workflow.
 
-Each phase leaves a usable terminal-driven system. The GUI and kiosk image are additive.
+**Phase 6 – Polish & optional desktop**  
+Full dashboard, split, HQ toggles, optional egui layer, packaging.
+
+Each phase leaves a usable terminal-driven system. See PLAN.md for full detail.
 
 ## Status
 
-Design phase. Builds on ideas from MediaPipeLine (mag cards, detection). No code yet. This repo exists so the notes survive.
+Design phase. Builds on ideas from MediaPipeLine and BitMatch. No code yet. This repo exists so the notes survive.
