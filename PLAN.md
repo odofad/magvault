@@ -729,6 +729,12 @@ Read-only viewer for existing exports.
 - No editing and no delete in this screen.
 - Shortcut (`e` or `l`) jumps to the Library module with this export open for editing.
 
+**Status rules**
+- Export status is `cold` if any clip is cold.
+- Export status is `done` when all clips have been copied (and verified if verification is on).
+- Date column shows the export card’s `created` date.
+- On-disk listing includes original clips and their matching sidecars (names come from the source mag).
+
 ## Zmag manager
 
 A **zmag** is a set of 4 drives in ZFS RAIDZ1 used for server-side cold storage.
