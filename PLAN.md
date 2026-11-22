@@ -136,8 +136,11 @@ Applies to all fields: camera, format, gamma, gamut, project assignment, manifes
 
 ## Ingest flow
 
-1. Operator plugs in physical mag (SD/USB) or points at mount point.
-2. System probes the card (BitMatch-style full copy preparation):
+1. Card discovery (both automatic and manual):
+   - Automatic: watch for newly mounted volumes (Ubuntu: /media, /run/media or udisks; macOS later: /Volumes). Recognise known camera layouts (Sony, Canon, ARRI, RED, Blackmagic, Panasonic, Fujifilm, GoPro, DJI, Insta360, generic DCIM). Offer each detected card with its label, size and guessed camera.
+   - Manual: operator can always type or browse to a path.
+   - Rescan action available if a card is plugged in after the screen is open.
+2. System probes the chosen card:
    - Walk all files and sidecars.
    - Auto-detect guesses for camera model, file format, gamma, gamut, and shoot day.
    - Build full file list with sizes.
@@ -301,6 +304,5 @@ See NOTES.md. Main ones in use:
 ## Open points
 
 - Exact terminal UI for confirmation (plain prompts vs ratatui).
-- Automatic card discovery vs manual path (both; details still to settle).
 - Details of the later split UI and how the original folder is retired.
 - Dashboard client that reads the telemetry file (including encoder queue).
