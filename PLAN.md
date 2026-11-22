@@ -462,6 +462,23 @@ Module-specific actions use single letters. They must not collide with the share
 | `Ctrl+S` | Save |
 | `Esc` | Return to dashboard. If there are unsaved changes, prompt “Discard changes?” |
 
+### Zmag manager
+| Key | Action |
+|-----|--------|
+| `c` | Copy whole mag to selected zmag |
+| `f` | Cycle project filter |
+| `←` / `→` | Switch zmag |
+| `a` | Toggle / trigger auto-backup |
+| `s` | Snapshots screen |
+| `p` | Pool / drive health screen (local only) |
+| `h` | Hold / release snapshot (on snapshots screen) |
+| `d` | Destroy snapshot (asks, needs sudo) |
+| `b` | Scrub pool |
+| `r` | Replace drive |
+| `t` | SMART self-test |
+| `m` | Refresh SMART |
+| `Esc` | From secondary screens → main two-pane; from main → dashboard |
+
 The dashboard is the landing screen. Every other module returns to it with `Esc`.
 
 ## Media playback
