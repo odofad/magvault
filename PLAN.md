@@ -262,6 +262,23 @@ The dashboard is the first screen after launch. It shows status and is the way t
 
 Both versions are ratatui. Esc/q returns to the dashboard from any module. Keyboard first (arrows + Enter or single-letter shortcuts). Mouse optional.
 
+## Shared key convention (terminal)
+
+One set of navigation keys for every screen. Defined once so modules stay consistent.
+
+| Key | Meaning |
+|-----|---------|
+| `Esc` | Return to the dashboard (from any module). Blocked while a write/copy is in progress. |
+| `q` | Quit the whole program. Only on the dashboard itself. |
+| `Tab` / `Shift+Tab` | Next / previous pane |
+| `↑` / `↓` | Move within a list or menu |
+| `Enter` | Confirm, open, or select the current item |
+| Mouse | Optional. Click a pane to focus it. |
+
+Module-specific actions use single letters (`p` pull, `n` new, `r` rescan/retry, `o` prepare, `x` abort, `e` edit profiles, etc.). They are listed in each module’s mockup and must not collide with the shared keys above.
+
+The dashboard is the landing screen. Every other module returns to it with `Esc`.
+
 ## Media playback
 
 - **Player**: mpv (orchestrated by Magvault via IPC). Handles 320p and HQ proxies, exact frame rate, original audio channels.
