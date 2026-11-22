@@ -606,7 +606,16 @@ Module-specific actions use single letters. They must not collide with the share
 | `Ctrl+S` | Save |
 | `Esc` | Return to dashboard. If there are unsaved changes, prompt “Discard changes?” |
 
-### Zmag manager
+#
+### Becoming cold
+
+A mag becomes cold only by an explicit operator action (evict / mark cold).
+
+- Allowed only if the mag has at least two complete placements on different zmags.
+- Once cold, the working copy may be removed from the server.
+- The placements remain in the database so the mag can be pulled back later.
+
+## Zmag manager
 | Key | Action |
 |-----|--------|
 | `c` | Copy whole mag to selected zmag |
@@ -752,6 +761,15 @@ Read-only viewer for existing exports.
 - Export status is `done` when all clips have been copied (and verified if verification is on).
 - Date column shows the export card’s `created` date.
 - On-disk listing includes original clips and their matching sidecars (names come from the source mag).
+
+
+### Becoming cold
+
+A mag becomes cold only by an explicit operator action (evict / mark cold).
+
+- Allowed only if the mag has at least two complete placements on different zmags.
+- Once cold, the working copy may be removed from the server.
+- The placements remain in the database so the mag can be pulled back later.
 
 ## Zmag manager
 
