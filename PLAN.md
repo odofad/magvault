@@ -801,6 +801,11 @@ A **zmag** is a set of 4 drives in ZFS RAIDZ1 used for server-side cold storage.
 - Copies use `rsync` behind the scenes (whole mag directory). Progress is shown in the operations strip.
 - Auto-backup: insert first zmag → copy everything that needs a first copy; insert second → copy everything that needs a second copy.
 
+**Eject**
+- `x` or an eject action runs `sudo zpool export` on the selected zmag (password required).
+- After export the drives can be safely removed.
+- The zmag disappears from the mounted list.
+
 **Secondary screens** (opened by key, Esc returns to the main two-pane view)
 - `s` — Snapshots: ZFS snapshot list for the selected mag or zmag. List, hold, destroy (with confirm). Inspired by ZFS Commander’s snapshot pane.
 - `p` — Pool / drive health: status, scrub, replace drive, SMART. Inspired by zfleet’s pool inspector. Local pools only. Remote zmag stations are not managed this way.
