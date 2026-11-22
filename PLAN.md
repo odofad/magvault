@@ -600,6 +600,7 @@ A **zmag** is a set of 4 drives in ZFS RAIDZ1 used for server-side cold storage.
 - Multiple zmags may be mounted simultaneously.
 - Two-pane (or multi-pane) view: left = online server mags (filterable by project), right = contents of the selected zmag.
 - Copy is whole-mag only.
+- Copies use `rsync` behind the scenes (whole mag directory). Progress is shown in the operations strip.
 - Auto-backup: insert first zmag → copy everything that needs a first copy; insert second → copy everything that needs a second copy.
 
 **Secondary screens** (opened by key, Esc returns to the main two-pane view)
