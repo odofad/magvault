@@ -955,3 +955,13 @@ See NOTES.md. Main ones in use:
 - Logging field set and whether logs are also written to a sidecar.
 - Details of the later split UI.
 - Exact fields inside a camera `.cam` profile.
+
+### Prepare
+
+Prepare formats the selected USB drive.
+
+- Filesystem: ext4 (default).
+- Clear warning that all data on the drive will be destroyed.
+- Sudo password required.
+- After format, Magvault writes its manifest and the drive is ready for ingest staging.
+- Mac compatibility is not a goal for field USBs. A Mac that needs the data uses a network pull or a separate export.
