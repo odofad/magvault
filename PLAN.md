@@ -136,6 +136,15 @@ Single admin-only module that owns creation, editing, duplication and deletion o
 
 Files on disk remain the source of truth. The module reloads the relevant folders and the server serves the updated lists. Normal operators never see the Profile Editor.
 
+## User model (no Magvault accounts)
+
+Magvault has no internal user database. Access is the system user plus SSH keys.
+
+- **Server user** (`magvault`): admin. Can open the Profile Editor and any other admin-only module. Runs the server process.
+- **Client user** (`magvaultclient`): shared username for all clients. Each client is identified by its own unique SSH key. Can use Ingest, Logging, Dashboard, Encoder, etc. Cannot open admin-only modules.
+
+Admin is simply “running as the `magvault` user”. Clients never become admin.
+
 ## Mag card format
 
 Plain text file `magcard.txt` inside the dump folder. Complete manifest so missing files can be identified even without the database.
