@@ -889,6 +889,48 @@ The server dashboard must show:
 - ZFS health for the working datasets (mags, proxies, bins, db and any other configured roots) — pool/dataset, mount state, used/available.
 - Zpool health for every mounted zmag (overall state + any non-ONLINE drives) so failing disks are visible.
 
+
+## Implementation defaults
+
+These are the remaining recommendations from `docs/technical-review-and-spec.md` that are adopted as defaults. They were not owner decisions; they are the smallest consistent choices an implementer should follow unless a later decision overrides them.
+
+### Process and transport
+- `magvaultd` daemon + TUI client. Client talks to the server over SSH with a forced-command gate.
+- Per-client `incoming/` spool (via `rrsync -wo`). Server commits into `mags/` after verification. Clients never write directly to `mags/`.
+- Staging is never `/tmp`. Use a path on the mags dataset or a dedicated staging dataset.
+
+### Naming and paths
+- Mag folder names use the full UUID. Short forms are display-only.
+- Relative paths everywhere in cards and manifests. No absolute paths stored in magcard or exportcard.
+- Export layout recreates the original relative path under the mag folder inside the bin.
+
+### Cards and manifests
+- `magcard.txt` and `exportcard.txt` use a simple `key: value` header plus a `# manifest` or `# clips` section.
+- Pipe `|` is the field separator in list sections. Reject lines that contain extra pipes or control characters.
+- ASC MHL is written at ingest. Later copies (zmag, cold pull) can write additional MHL generations.
+- Logging fields live in a `# logging` section (already locked).
+
+### Schema notes
+- Camera is always a profile id (or empty). No free-text camera model in the database.
+- One media file = one clip in v1. Spanned/chaptered clips are a later feature.
+- `archived` status is not used. Cold is the terminal state for a mag that has been evicted.
+- Cold-pull requests link to the export that triggered them.
+
+### Security
+- SSH keys for clients are served via `AuthorizedKeysCommand` reading a Magvault-managed file. Not a hand-edited `authorized_keys`.
+- Forced command + `restrict` on client keys. Admin verbs are refused over the client gate.
+- Sudo helper is the only privileged path (already locked). `timestamp_timeout=0`.
+- Input validation on every path and filename that crosses the SSH boundary.
+
+### Other
+- Snapshot creation is external (cron or ZFS auto). Magvault only lists, holds, and destroys.
+- Offline logging conflicts: per-field last-writer-wins, with a WARN log line.
+- RAW formats without an ffmpeg decoder: proxy job fails with `unsupported codec` and is logged. No vendor SDK in v1.
+- Log day boundary is UTC.
+- USB master/slave: master = staging + sync source; slave = mirror only. Or drop the distinction if it adds no value.
+
+Full rationale and the complete specification are in `docs/technical-review-and-spec.md`.
+
 ## Roadmap
 
 ### Phase 0 – Foundation
