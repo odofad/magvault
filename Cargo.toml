@@ -1,0 +1,15 @@
+[package]
+name = "magvault"
+version = "0.1.0"
+edition = "2021"
+description = "Archive and retrieval system for camera media mags (Phase 0: config, schema, manual-path ingest, magcard conflict handling)"
+publish = false
+
+# Phase 0 uses the Rust standard library only. SQLite is reached through its C API
+# (system libsqlite3, `libsqlite3-dev` on Ubuntu). SHA-256 and SHA-512/C4 are implemented
+# in src/hash.rs and checked against coreutils in the test suite.
+[dependencies]
+
+[profile.release]
+opt-level = 3
+debug = false

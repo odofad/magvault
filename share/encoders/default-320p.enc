@@ -1,0 +1,23 @@
+# Magvault encoder profile
+name: default-320p
+id: default-320p
+type: 320p          # 320p | hq | custom
+
+# Video
+codec: libx264
+height: 320         # width calculated to preserve aspect; "source" = no resize
+rate_control: crf   # crf | bitrate
+crf: 23
+preset: veryfast
+
+# Audio
+audio_codec: aac
+audio_bitrate: 128k
+# audio_channels is always source — not stored, not editable
+
+# Container
+container: mp4
+
+notes: Library proxy. Always queued after ingest.
+
+**HQ example**

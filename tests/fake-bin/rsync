@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+# TEST DOUBLE — NOT rsync.
+#
+# Used only by tests/e2e.sh on machines without rsync. It implements exactly the
+# options Magvault's ingest passes (-t, --files-from, --from0, --no-links,
+# --no-devices, --no-specials, --info=progress2, --outbuf=L) by copying each listed
+# file with its modification time. Set FAKE_RSYNC_CORRUPT=1 to flip one byte in the
+# first copied file (to test integrity-error handling), FAKE_RSYNC_FAIL=<code> to exit
+# with an error after copying half the files.
+import os, shutil, sys
+
+args = sys.argv[1:]
+if args == ["--version"]:
+    print("rsync  version 0.0 (magvault test double)")
+    sys.exit(0)
+
+files_from = None
+from0 = False
+paths = []
+for a in args:
+    if a.startswith("--files-from="):
+        files_from = a.split("=", 1)[1]
+    elif a == "--from0":
+        from0 = True
+    elif a in ("-t", "--no-links", "--no-devices", "--no-specials", "--info=progress2", "--outbuf=L"):
+        pass
+    elif a.startswith("-"):
+        sys.stderr.write(f"fake rsync: unsupported option {a}\n")
+        sys.exit(1)
+    else:
+        paths.append(a)
+if files_from is None or len(paths) != 2:
+    sys.stderr.write("fake rsync: expected --files-from=<list> SRC/ DST/\n")
+    sys.exit(1)
+src, dst = paths
+data = open(files_from, "rb").read()
+names = [n.decode() for n in (data.split(b"\0") if from0 else data.splitlines()) if n]
+fail = os.environ.get("FAKE_RSYNC_FAIL")
+for i, rel in enumerate(names):
+    if fail and i >= len(names) // 2:
+        sys.stderr.write("fake rsync: simulated failure\n")
+        sys.exit(int(fail))
+    s = os.path.join(src, rel)
+    d = os.path.join(dst, rel)
+    if os.path.islink(s):
+        continue
+    os.makedirs(os.path.dirname(d), exist_ok=True)
+    shutil.copyfile(s, d)
+    st = os.stat(s)
+    os.utime(d, ns=(st.st_atime_ns, st.st_mtime_ns))
+    if i == 0 and os.environ.get("FAKE_RSYNC_CORRUPT") == "1" and os.path.getsize(d) > 0:
+        with open(d, "r+b") as f:
+            b = f.read(1)
+            f.seek(0)
+            f.write(bytes([b[0] ^ 0xFF]))
+print(f"{len(names)} files copied (test double)")

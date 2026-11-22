@@ -1,0 +1,13 @@
+name: hevc-hq
+id: hevc-hq
+type: hq
+codec: libx265
+height: source
+rate_control: bitrate
+bitrate: 40M
+preset: medium
+audio_codec: aac
+audio_bitrate: 192k
+container: mp4
+
+**Rules enforced at encode time (not editable)**

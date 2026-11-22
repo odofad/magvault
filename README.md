@@ -65,4 +65,4 @@ Each phase leaves a usable terminal system. Full detail is in PLAN.md.
 
 ## Status
 
-Design phase. All major modules have locked behaviour in PLAN.md and mockups in `docs/mockups/`. No code yet.
+Phase 0 implemented: config directory, SQLite schema, manual-path ingest (`magvault ingest <card> --project <name>`) and magcard conflict handling (`magvault reconcile`). Build and usage: `docs/phase0.md`. All other modules have locked behaviour in PLAN.md and mockups in `docs/mockups/`.

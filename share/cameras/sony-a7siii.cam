@@ -1,0 +1,26 @@
+# Magvault camera profile
+name: Sony A7S III
+id: sony-a7siii
+
+# Detection
+vendor: Sony
+model: A7S III
+card_layout: DCIM, PRIVATE
+filename_pattern: A001_C*.mov
+
+# Media
+file_formats: ProRes RAW, XAVC S, XAVC HS
+default_format: ProRes RAW
+
+gamma: S-Log3, S-Log2, S-Cinetone, Rec.709
+default_gamma: S-Log3
+
+gamut: S-Gamut3.Cine, S-Gamut3, Rec.709
+default_gamut: S-Gamut3.Cine
+
+# Optional technical hints
+typical_resolutions: 3840x2160, 1920x1080
+typical_fps: 24, 25, 30, 50, 60, 120
+audio_channels: 2, 4
+
+notes: Full-frame cinema camera. S-Log3 + S-Gamut3.Cine is the usual pair.
