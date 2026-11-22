@@ -257,6 +257,18 @@ Separate from ingest. Per-clip (or per-asset) logging. Original filenames and si
 
 Free-text fields (Description, Technical note) must look like editable input boxes, not static display. Clickable / popup fields avoid typos while remaining growable.
 
+### Logging screen behaviour
+
+- **Layout**: Mag list on the left (same pattern as ingest Detected pane). Selecting a mag loads its clips.
+- **Save**: Autosave on field exit. Explicit save on leaving the clip or the module. Clear “saved” indicator.
+- **Proxy status**: Small icon in the player area shows proxy state (ready / pending / pulling / local fallback).
+- **Remove**: Each tag, camera operator, or director/producer chip has a small × to remove it.
+- **Mark complete**: Action to mark the whole mag “logging complete”.
+- **Undo / revert**:
+  - Light undo (`Ctrl+Z`) for the current field.
+  - Revert loads the last backup of the mag file (`.magvault/magcard.*.backup` or equivalent log sidecar backup). The database does not store its own backup; the mag file on disk is the recoverable copy.
+- Filter behaviour for the clip list is still open.
+
 ## Dashboard (landing screen)
 
 The dashboard is the first screen after launch. It shows status and is the way to enter other modules.
