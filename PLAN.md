@@ -889,58 +889,57 @@ The server dashboard must show:
 - ZFS health for the working datasets (mags, proxies, bins, db and any other configured roots) — pool/dataset, mount state, used/available.
 - Zpool health for every mounted zmag (overall state + any non-ONLINE drives) so failing disks are visible.
 
-## Roadmap (revised)
+## Roadmap
 
 ### Phase 0 – Foundation
 - Config directory + path.conf + system pointer file.
-- SQLite schema created.
-- Manual-path ingest: probe, operator confirm, verified copy, magcard.txt + ASC MHL, DB records, queue 320p job.
-- Conflict rewrite of mag card.
+- SQLite schema.
+- Manual-path ingest: probe, confirm, hash at ingest, verified copy, magcard.txt + ASC MHL, DB records, queue 320p.
+- Conflict handling (database wins for metadata, magcard backed up).
 - Basic shell only.
 
 ### Phase 1 – Client ingest & field backups
-- Automatic + manual card discovery.
-- Full client ingest screen (staging, USB-as-staging, direct, mirror, warnings).
-- Field backup drives with magvault-backup.txt, reconnect-and-sync.
-- USB diagnostics, Prepare (sudo), and pending-sync safety rule.
+- Card discovery.
+- Full client ingest (staging, USB, direct, mirror).
+- Prepare formats USB as ext4.
+- Reconnect-and-sync, pending-sync safety.
 - Server confirmation + autoclean.
 
-### Phase 2 – Proxy subsystem & telemetry
-- Server-side encode queue (320p).
-- Proxy rules enforced.
-- Live telemetry file (encoder queue) + periodic disk snapshot.
-- Server dashboard (landing screen) that reads the telemetry file.
-- Client dashboard (thin status + module menu).
-- Encoder module: queue management, new ad-hoc job to custom_encode/, profile shortcut.
+### Phase 2 – Proxies, encoder, dashboards
+- 320p encode queue and rules.
+- Encoder module (queue + ad-hoc to custom_encode/).
+- Server dashboard (landing) and client dashboard (includes Library).
+- Telemetry file.
 
-### Phase 3 – Export bins & library requests
-- Named export folders + exportcard.txt.
-- Copy originals only.
-- Discover exports by walking bins path.
-- Select clips → create/add to export.
+### Phase 3 – Logging & Library
+- Logging module (fields written to magcard # logging section).
+- Library on server and client (local proxy cache, pull proxies).
+- Export card updated on add.
 - Cold-pull request generation.
 
-### Phase 4 – Zmag manager (local)
-- Create zmag from raw drives.
-- Auto-import/mount recognised zmags only.
-- Two-pane backup terminal.
-- Auto-backup pass.
+### Phase 4 – Zmag manager
+- Create zmag (role primary/backup chosen at creation).
+- Two-pane whole-mag rsync copy.
+- Auto-backup fills the chosen role.
+- Eject (zpool export).
+- Explicit evict to cold (requires ≥ 2 placements).
 - Placement tracking + on-zmag manifest.
-- Zpool health in telemetry.
+- Local pool health.
 
-### Phase 5 – Remote zmag + key module + cold pull
-- SSH key module.
-- Remote zmag station.
-- Full cold-pull workflow.
+### Phase 5 – Remaining modules
+- Export bins browser (read-only, shortcut to Library).
+- Profile Editor (admin).
+- Key module (admin, generate or accept, USB export, discard on leave).
+- Logs viewer (file-based, 30-day default).
+- Settings (admin on server, client-relevant on client).
+- Sudo helper (single root-owned binary, password every time).
 
 ### Phase 6 – Polish & optional desktop
-- Logging module (client + server) with mpv proxy playback.
-- Full dashboard client refinements.
+- Remote zmag stations.
 - Split function.
 - HQ proxy toggle.
-- Separate standalone mouse-first desktop client (egui/Vulkan or similar).
+- Separate mouse-first desktop client.
 - Packaging and docs.
-- Profile Editor module (camera + encoder profiles).
 
 ## Borrowed ideas
 
@@ -951,20 +950,14 @@ See NOTES.md. Main ones in use:
 
 ## Open points
 
-- Exact terminal UI for confirmation (plain prompts vs ratatui).
-- How project list and “create new project” work in the terminal.
-- Precise SQLite tables for placements, encode jobs, pull requests, exports, logging fields.
-- Encode queue implementation details.
-- How the server notices a newly committed mag and enqueues the proxy job.
+- Exact terminal UI details still open in some mockups (truncation at 120×36, a few key letters).
+- Encode queue implementation details (how the server notices a new mag and enqueues the job).
 - Card-layout detection completeness and fallback.
 - Exact on-zmag manifest format and location.
-- Export discovery: pure filesystem walk vs light index.
 - Telemetry JSON schema.
-- Key module restrictions.
 - Failure and retry semantics for every copy path.
-- Logging field set and whether logs are also written to a sidecar.
 - Details of the later split UI.
-- Exact fields inside a camera `.cam` profile.
+- Offline logging conflict rule (needed when client logging ships).
 
 ### Prepare
 
