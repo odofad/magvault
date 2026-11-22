@@ -26,6 +26,8 @@ mags/                              # flat, no subfolders
   <YYYYMMDD>_<mag-uuid>/           # shoot day (operator-confirmed) + UUID
     <exact contents of the card>   # original filenames + sidecars only
     magcard.txt                    # complete manifest + confirmed metadata
+    ascmhl/                        # ASC MHL inventory (standard checksum manifest)
+      manifest.mhl
     .magvault/                     # hidden, Magvault-internal only
       magcard.*.backup
 
@@ -54,8 +56,9 @@ No project folders on disk. All project relationships live in the database.
 - One physical card = one mag, unless explicitly split later.
 - One camera only. No mixing sources, cameras, or formats inside a mag.
 - Folder name: `<YYYYMMDD>_<mag-uuid>`. Date is the **shoot day** (guessed from camera date-modified or earliest media date, confirmed by operator). Never renamed after creation.
-- Contents: exact verified copy of the card (original filenames + matching sidecars). If it was not on the SD card, it is not in the mag folder — except `magcard.txt` and the hidden `.magvault/` backups of that card.
+- Contents: exact verified copy of the card (original filenames + matching sidecars). If it was not on the SD card, it is not in the mag folder — except `magcard.txt`, the ASC MHL inventory, and the hidden `.magvault/` backups of the card.
 - Mag card is plain text (`magcard.txt`), complete manifest + confirmed metadata + project link. Stays with the folder forever.
+- ASC MHL inventory is written by default alongside the mag card. It contains only the standard file list, sizes, mtimes and checksums (no Magvault-specific fields).
 - Merge of mags is forbidden (including cards from the same camera, because clip names are reused).
 - Split (later feature): creates new UUID folders. New shoot-day date is taken from the first file after the split point and confirmed by the operator. Original folder is updated or retired accordingly.
 - Whole folder remains self-describing if the database disappears.
@@ -119,6 +122,8 @@ clip001.XML | 4567 | def...
 ...
 ```
 
+ASC MHL (`ascmhl/manifest.mhl`) is written at the same time. It holds the industry-standard inventory (filenames, sizes, mtimes, SHA-256/MD5) and nothing else.
+
 ## Conflict handling
 
 Database is authoritative.
@@ -145,10 +150,10 @@ Applies to all fields: camera, format, gamma, gamut, project assignment, manifes
    - Exact card contents, original filenames and sidecars preserved.
    - SHA-256 hashed on the way in; destination verified.
    - Only proceeds to commit if verification passes.
-6. Write complete-manifest magcard.txt into the dump folder.
+6. Write complete-manifest magcard.txt and ASC MHL inventory into the dump folder.
 7. Insert records in SQLite.
-8. Generate 320p proxies into `proxies/db/<shootday>_<mag-uuid>/` (immediate or queued).
-9. Mag is now online and linked.
+8. Queue 320p proxy generation on the server (does not block ingest).
+9. Mag is now online and linked. Server encodes when it has capacity.
 
 Per-file shot logging is not part of ingest.
 
@@ -181,6 +186,7 @@ All targets and states are visible and choosable on the ingest screen.
 
 - `proxies/db/` — always-on 320p library proxies. Same folder naming as mags.
 - `proxies/hq/` — optional full-resolution lower-bitrate HEVC (30-60 Mbps). Same naming. Generated only when requested.
+- 320p generation is queued on the server after ingest commit so it never delays I/O. Faster servers simply clear the queue sooner.
 - Per-asset (or whole-mag) toggle in the encoding stage decides what also goes to `hq/`. Noted for later.
 - NLE-specific proxies (Resolve etc.) are created with bin exports and live with the bins, not here.
 
@@ -265,13 +271,15 @@ telemetry_disk=logs/telemetry-latest.json
 
 Readable without root. Client dashboard (or any SSH session) simply reads the file. Persistent history, if wanted, is a separate less-frequent log.
 
+The dashboard must show encoder queue depth and per-job progress (which mag/asset is encoding, percent or frame count, ETA if available).
+
 ## Phase 0 – done when
 
 - Schema exists.
 - Probe + operator confirmation (including shoot day) + project assignment works from the terminal.
 - Verified full-card copy into correctly named mag folder succeeds.
-- Mag card (complete manifest) and database records are written.
-- Basic 320p proxy can be generated into the matching proxies/db folder.
+- Mag card (complete manifest) + ASC MHL and database records are written.
+- 320p proxy job is queued on the server.
 - Conflict detection and card rewrite (with backup in .magvault/) works.
 - Usable entirely from the shell. No GUI required.
 
@@ -293,8 +301,6 @@ See NOTES.md. Main ones in use:
 ## Open points
 
 - Exact terminal UI for confirmation (plain prompts vs ratatui).
-- Whether 320p generation is synchronous or queued.
-- ASC MHL alongside mag card or not.
-- Automatic card discovery vs manual path.
+- Automatic card discovery vs manual path (both; details still to settle).
 - Details of the later split UI and how the original folder is retired.
-- Dashboard client that reads the telemetry file.
+- Dashboard client that reads the telemetry file (including encoder queue).
