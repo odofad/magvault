@@ -147,13 +147,14 @@ Admin is simply “running as the `magvault` user”. Clients never become admin
 
 ### Sudo (no root)
 
-The `magvault` user never runs as root. It is granted passwordless sudo for specific ZFS commands only:
+The `magvault` user never runs as root. It is granted sudo for specific ZFS commands only, and the password is still required:
 
 ```
-magvault ALL=(root) NOPASSWD: /usr/sbin/zpool, /usr/sbin/zfs
+magvault ALL=(root) /usr/sbin/zpool, /usr/sbin/zfs
 ```
 
 Magvault calls `sudo zpool` / `sudo zfs` when it needs to create, import, export or manage a zmag.  
+The operator must enter the sudo password. Nothing is executed until the password is accepted.  
 Clients (`magvaultclient`) have no sudo rights.  
 All other Magvault operations run unprivileged.
 
