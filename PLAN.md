@@ -587,6 +587,14 @@ A **zmag** is a set of 4 drives in ZFS RAIDZ1 used for server-side cold storage.
   - human name `zmag-01`, `zmag-02`, …
 - Only pools with that property (or matching name pattern) are ever imported or mounted. All other zpools are ignored.
 
+**Create flow** (opened with `n` from the Zmag manager)
+1. List available raw drives.
+2. Operator marks exactly four.
+3. Confirm auto-generated name (`zmag-NN`) and the fixed properties above.
+4. Sudo password required.
+5. Create the pool and mount it.
+6. New zmag appears in the right pane.
+
 **Local operation**
 - Plug in drives → zmag manager auto-imports and mounts only recognised zmags.
 - Multiple zmags may be mounted simultaneously.
