@@ -577,6 +577,10 @@ A **zmag** is a set of 4 drives in ZFS RAIDZ1 used for server-side cold storage.
 - Copy is whole-mag only.
 - Auto-backup: insert first zmag → copy everything that needs a first copy; insert second → copy everything that needs a second copy.
 
+**Secondary screens** (opened by key, Esc returns to the main two-pane view)
+- `s` — Snapshots: ZFS snapshot list for the selected mag or zmag. List, hold, destroy (with confirm). Inspired by ZFS Commander’s snapshot pane.
+- `p` — Pool / drive health: status, scrub, replace drive, SMART. Inspired by zfleet’s pool inspector. Works for local pools and remote zmag stations.
+
 **On-zmag manifest**
 ```text
 id: zmag-01
