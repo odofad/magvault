@@ -166,7 +166,7 @@ When a mismatch is detected (cold mag reappears, card differs from database for 
 1. Copy existing magcard.txt to `.magvault/magcard.YYYYMMDD-HHMMSS.backup`.
 2. Write a fresh magcard.txt from the current database record.
 
-Applies to all fields: camera, format, gamma, gamut, project assignment, manifest, notes, shoot date.
+Applies to all fields: camera, format, gamma, gamut, project assignment, manifest, notes, shoot day.
 
 ## Ingest flow
 
@@ -227,6 +227,44 @@ Ingest can run on a client terminal (or standalone machine). After a successful 
 - Valid drives with pending mags remain selectable as targets; they simply cannot be re-prepared until synced.
 
 All targets and states are visible and choosable on the ingest screen.
+
+## Logging module
+
+Separate from ingest. Per-clip (or per-asset) logging of descriptions, keywords, ratings, etc. Original filenames and sidecars stay untouched. Log data lives in the database (and can optionally be written into a sidecar or the mag card).
+
+- Available on both **client** and **server**.
+- Client logging works against local staging, USB backups, or recently synced mags. Changes sync to the server database when connected. Offline logging is supported on local media.
+- Server logging has full access to all online mags.
+- Playback uses proxies (see Media playback). Camera raws are not opened for casual viewing.
+
+## Dashboard (landing screen)
+
+The dashboard is the first screen after launch. It shows status and is the way to enter other modules.
+
+**Server (or standalone) dashboard**
+- Full status from the local telemetry file: encoder queue depth + active job progress, zmag/zpool health (overall state + any non-ONLINE drives), simple counts (open projects, online mags, pending requests), recent events.
+- Module menu: Ingest, Logging, Library, Export bins, Zmag manager, Profile Editor (admin), Logs, Settings.
+- Reads local telemetry file + light local checks.
+
+**Client dashboard**
+- Thin status: server connection state (online/offline/syncing), simple queue depth number when connected, local USB/staging status.
+- Module menu: Ingest, Logging (local-capable), and the ability to open the full server dashboard over SSH.
+- Does **not** show full encoder progress or zmag drive health by default. Those stay on the server.
+- Local USB/staging and recent local activity are first-class.
+
+Both versions are ratatui. Esc/q returns to the dashboard from any module. Keyboard first (arrows + Enter or single-letter shortcuts). Mouse optional.
+
+## Media playback
+
+- **Player**: mpv (orchestrated by Magvault via IPC). Handles 320p and HQ proxies, exact frame rate, original audio channels.
+- **Audio**: system audio server. PipeWire on a normal Ubuntu 26.04 desktop; ALSA fallback for barebone/minimal systems. Magvault does not implement its own audio path.
+- **Video**: kitty graphics protocol or sixel when the terminal supports it. Over pure SSH without graphics support, audio + status line only.
+- **Proxy preference**: logging prefers server-generated 320p proxies. Client can pull them when ready. Explicit fallback to quick temporary local proxies for a single mag when offline or server proxies are not yet available.
+- Camera raws are never used for casual playback.
+
+**Desktop client** (later, separate)
+- Standalone mouse-first application (egui/Vulkan or similar).
+- Not part of the current terminal work. Terminal version remains primary.
 
 ## Proxies
 
@@ -342,9 +380,9 @@ telemetry_live=/dev/shm/magvault-telemetry.json
 telemetry_disk=logs/telemetry-latest.json
 ```
 
-Readable without root. Client dashboard (or any SSH session) simply reads the file. Persistent history, if wanted, is a separate less-frequent log.
+Readable without root. The **server** dashboard reads the local file. A client may request a short status summary over SSH (connection state, queue depth) but does not pull the full telemetry file by default.
 
-The dashboard must show:
+The server dashboard must show:
 - Encoder queue depth and per-job progress.
 - Zpool health for every mounted zmag (overall state + any non-ONLINE drives) so failing disks are visible.
 
@@ -368,7 +406,8 @@ The dashboard must show:
 - Server-side encode queue (320p).
 - Proxy rules enforced.
 - Live telemetry file (encoder queue) + periodic disk snapshot.
-- Minimal dashboard that reads the telemetry file.
+- Server dashboard (landing screen) that reads the telemetry file.
+- Client dashboard (thin status + module menu).
 
 ### Phase 3 – Export bins & library requests
 - Named export folders + exportcard.txt.
@@ -391,10 +430,11 @@ The dashboard must show:
 - Full cold-pull workflow.
 
 ### Phase 6 – Polish & optional desktop
-- Full dashboard client.
+- Logging module (client + server) with mpv proxy playback.
+- Full dashboard client refinements.
 - Split function.
 - HQ proxy toggle.
-- Optional egui/Vulkan layer.
+- Separate standalone mouse-first desktop client (egui/Vulkan or similar).
 - Packaging and docs.
 - Profile Editor module (camera + encoder profiles).
 
@@ -409,7 +449,7 @@ See NOTES.md. Main ones in use:
 
 - Exact terminal UI for confirmation (plain prompts vs ratatui).
 - How project list and “create new project” work in the terminal.
-- Precise SQLite tables for placements, encode jobs, pull requests, exports.
+- Precise SQLite tables for placements, encode jobs, pull requests, exports, logging fields.
 - Encode queue implementation details.
 - How the server notices a newly committed mag and enqueues the proxy job.
 - Card-layout detection completeness and fallback.
@@ -418,6 +458,6 @@ See NOTES.md. Main ones in use:
 - Telemetry JSON schema.
 - Key module restrictions.
 - Failure and retry semantics for every copy path.
-- Logging strategy.
+- Logging field set and whether logs are also written to a sidecar.
 - Details of the later split UI.
 - Exact fields inside a camera `.cam` profile.
