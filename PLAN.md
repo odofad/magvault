@@ -480,6 +480,15 @@ Ingest can run on a client terminal (or standalone machine). After a successful 
 
 All targets and states are visible and choosable on the ingest screen.
 
+
+### Logging on the mag card
+
+Logging fields are written into `magcard.txt` under a `# logging` section so a lost database can be rebuilt.
+
+- Rewritten when the operator leaves the clip or the Logging module (same moment as autosave).
+- Previous version kept as the single `.magvault/magcard.*.backup`.
+- Fields: description, rating, slow_motion, technical_note, shot_type, camera_operator, director_producer, tags.
+
 ## Logging module
 
 Separate from ingest. Per-clip (or per-asset) logging. Original filenames and sidecars stay untouched. Log data lives in the database (and can optionally be written into a sidecar or the mag card).
