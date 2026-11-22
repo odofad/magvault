@@ -794,6 +794,7 @@ Two ways to add a client:
      - `w` write it to a chosen file, or
      - `u` write it directly to a mounted USB drive (lists removable drives, admin picks one, writes e.g. `magvault-client.key`).
    - After either action the private key is no longer stored on the server.
+   - Leaving the generate screen without writing (Esc or otherwise) discards the private key. It is never stored.
    - Client never connects until it already has the private key.
 
 2. **Accept a client public key**
