@@ -779,7 +779,11 @@ Two ways to add a client:
 1. **Generate on server**
    - Admin generates a key pair in the Key module.
    - Public key is added to `~magvaultclient/.ssh/authorized_keys`.
-   - Private key is shown once (or written to a file) for the admin to copy to the client by hand (USB, secure paste, etc.).
+   - Private key is shown once.
+   - Admin can:
+     - `w` write it to a chosen file, or
+     - `u` write it directly to a mounted USB drive (lists removable drives, admin picks one, writes e.g. `magvault-client.key`).
+   - After either action the private key is no longer stored on the server.
    - Client never connects until it already has the private key.
 
 2. **Accept a client public key**
