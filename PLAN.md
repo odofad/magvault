@@ -563,6 +563,16 @@ This is field USB only. It is not related to zmag primary/backup roles.
 - Prepare is only re-enabled after every mag on the set has been successfully transferred to the server.
 - A valid set with pending mags remains selectable as a target; it simply cannot be re-prepared until synced.
 
+**Clean**
+- Available only when every mag on the set is synced (no pending).
+- Opens a popup: “All mags on <set> are on the server. Wipe master and slave?”
+- Sudo required. Nothing is deleted until the password is accepted.
+- Deletes the mag folders on both drives.
+- Keeps `magvault-backup.txt`, the set id, the size limit, and the master/slave roles.
+- After clean the set is empty, still valid, and ready for new mags. No re-prepare.
+- Logged.
+- Re-prepare is only for a new set (different drives, different size, or a drive that was never prepared).
+
 The main ingest screen shows the finished set (master + slave, valid, pending/synced) or “not valid · Prepare”.
 
 All targets and states are visible and choosable on the ingest screen.
