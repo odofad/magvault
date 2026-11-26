@@ -969,6 +969,19 @@ The server dashboard must show:
 
 
 
+
+## CLI and scripting
+
+Magvault is terminal-first. It is not an API. There is no HTTP service and no client library.
+
+Every action the TUI can perform must also be performable from the CLI with flags, so a human, a shell script, or a bot can run it without a TUI.
+
+- Non-interactive mode must work when the inputs are unambiguous (`--yes`, one discovered card, explicit paths, explicit set).
+- If the input is ambiguous (several cards, missing project, smaller slave, pending sync), refuse with a clear message. Do not guess.
+- `--yes` accepts guessed values that are already determined (camera profile, single card). It does not skip integrity or sudo checks.
+- Bots and tests use the same binary and the same flags. No separate automation interface.
+- Privileged actions (Prepare, Clean) still require sudo. Scripts must be able to supply that through the normal sudo mechanism.
+
 ## Threat model
 
 Magvault handles original camera media and production metadata. The main risks are data loss, silent corruption, unauthorized access, and privilege misuse.
