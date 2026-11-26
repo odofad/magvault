@@ -514,17 +514,36 @@ Ingest can run on a client terminal (or standalone machine). After a successful 
 - Extra mirror to one or more backup drives at any time.
 - Warning shown when no backup exists and server sync is not yet confirmed.
 
-**Field backup drives**
-- Whole drive can be dedicated.
-- Gets `magvault-backup.txt` at the root:
-  - `role: master` or `slave`
-  - label, created time, host
-  - list of mag folders and whether each is pending server sync or already synced
+**Field backup sets**
+
+Field backups are matched pairs. High-pace, opinionated. The operator does not choose layouts.
+
+- A set is exactly one **master** and one **slave**.
+- Both drives hold the exact same set of mags. Always.
+- Usable size is the size of the smaller drive.
+- Prepare order:
+  - Warning shown when creating a set: “Mount the smaller drive first and prepare it as master.”
+  - Master is prepared first. Its size becomes the set size.
+  - Slave must be the same size or larger. If smaller, refuse.
+  - If the slave is larger, create a partition (or limit) equal to the master’s usable size. The rest of the slave is unused.
+- A slave cannot be prepared before its master exists.
+- A mag cannot be added to one drive without the other.
+- If the larger drive was prepared first, a smaller slave is refused. The operator must start a new set with the smaller drive as master.
+
+**magvault-backup.txt** (at the root of each drive in the set)
+- `role: master` or `slave`
+- `set_id`
+- `set_size` (usable bytes)
+- label, created time, host
+- list of mag folders and whether each is pending server sync or already synced
+
 - Same mag-folder layout as the server + original files + `magcard.txt` (with SHA-256).
-- When mounted, client lists projects/mags/free space the same way the server view does.
-- Operator can reconnect the drive later and finish “sync pending to server.”
+- When mounted, client lists the set, projects/mags, and free space.
+- Operator can reconnect the set later and finish “sync pending to server.”
 - Checksums live in the mag cards, so verification works on any filesystem.
 - Encryption is handled at the OS level if desired (not by Magvault).
+
+This is field USB only. It is not related to zmag primary/backup roles.
 
 **USB drive diagnostics and prepare (ingest screen)**
 - Only a Magvault-prepared drive (has valid `magvault-backup.txt` at root) can be selected as a backup target.
