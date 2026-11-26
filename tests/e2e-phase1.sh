@@ -14,12 +14,13 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+MEDIA="/media/${SUDO_USER:-root}"   # the helper mounts under /media/<sudo user>
 W="$REPO/target/e2e1-work"
 cleanup() {
   [ -n "${SERVE_PID:-}" ] && kill "$SERVE_PID" 2>/dev/null || true
   [ -n "${SERVE_PID:-}" ] && { wait "$SERVE_PID" 2>/dev/null || true; }
   if [ -n "${LOOPS:-}" ]; then
-    for m in /media/root/FIELD-L_M /media/root/FIELD-L_S; do mountpoint -q "$m" 2>/dev/null && umount "$m"; rmdir "$m" 2>/dev/null || true; done
+    for m in $MEDIA/FIELD-L_M $MEDIA/FIELD-L_S; do mountpoint -q "$m" 2>/dev/null && umount "$m"; rmdir "$m" 2>/dev/null || true; done
     for l in $LOOPS; do losetup -d "$l" 2>/dev/null || true; done
   fi
   [ "${MADE_ALLOW:-}" = 1 ] && rm -f /etc/magvault/allow-loop-devices
@@ -72,6 +73,20 @@ sleep 0.5
 pass "server + client config, serve running (pid $SERVE_PID)"
 expect_fail "server command refused in client config" "is a server command" mc reconcile --all
 expect_fail "client command refused in server config" "is a client command" ms sync
+
+echo "== help"
+top=$("$MV" --help)
+for c in init ingest reconcile serve gate cards sync usb projects; do grep -qE "^  $c +" <<<"$top" || fail "--help misses $c"; done
+grep -qE -- "--(project|camera|via|device|spool|verify-hashes|once|scan-root)" <<<"$top" && { echo "$top"; fail "--help dumps command flags"; }
+[ "$(wc -l <<<"$top")" -lt 40 ] || fail "--help is long ($(wc -l <<<"$top") lines)"
+pass "magvault --help: commands only, grouped, no flag lists"
+ih=$("$MV" ingest --help)
+grep -q "^magvault ingest — " <<<"$ih" && grep -q -- "--camera" <<<"$ih" && grep -q -- "--via" <<<"$ih" && grep -q "^EXAMPLE" <<<"$ih" || { echo "$ih"; fail "ingest --help"; }
+grep -qE -- "--(device|spool|verify-hashes|once|label)" <<<"$ih" && { echo "$ih"; fail "ingest --help shows other commands' flags"; }
+[ "$("$MV" help ingest)" = "$ih" ] || fail "help ingest differs from ingest --help"
+grep -q "^magvault usb — " <<<"$("$MV" usb clean --help)" || fail "usb clean --help"
+expect_fail "help for an unknown command refused" "unknown command \"bogus\"" "$MV" help bogus
+pass "ingest --help: ingest flags only; help <command> is the same; every command has help"
 
 echo "== card discovery (fixtures)"
 MNT="$W/mounts"
@@ -208,8 +223,33 @@ for d in FIELD-B_M FIELD-B_S; do grep -q "^$F5 | synced | " "$USB/$d/magvault-ba
 [ -d "$SRV/mags/$F5" ] || fail "set mag not on server"
 pass "sync from the master: committed, marked synced on both drives, mags kept until Clean"
 grep -q "all synced · \[usb clean\] available" <<<"$(mc usb status --scan-root "$USB")" || fail "clean not offered"
-expect_fail "helper refuses to clean folders that are not mounted drives" "not a mounted drive" mc usb clean --set FIELD-B --yes --scan-root "$USB"
+if [ "$(id -u)" = 0 ]; then
+  expect_fail "helper refuses to clean folders that are not mounted drives" "not a mounted drive" mc usb clean --set FIELD-B --yes --scan-root "$USB"
+else
+  echo "  --  helper refusal check skipped (not root: the helper would need sudo; run the script as root to include it)"
+fi
 for d in FIELD-B_M FIELD-B_S; do [ -d "$USB/$d/$F5" ] || fail "helper deleted something after refusing"; done
+
+echo "== Prepare candidates (fake lsblk): signatures refused with the fix, camera cards never offered"
+cat > "$W/lsblk.txt" <<'LSBLK'
+NAME="sdy" PATH="/dev/zero" SIZE="320072933376" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="" LABEL="" MOUNTPOINT="" PKNAME="" MODEL="ST320LM010"
+NAME="sdy1" PATH="/dev/zero1" SIZE="320000000000" TYPE="part" RM="0" HOTPLUG="0" TRAN="" FSTYPE="zfs_member" LABEL="wildraid" MOUNTPOINT="" PKNAME="sdy" MODEL=""
+NAME="mmcblk9" PATH="/dev/full" SIZE="127865454592" TYPE="disk" RM="0" HOTPLUG="1" TRAN="" FSTYPE="" LABEL="" MOUNTPOINT="" PKNAME="" MODEL=""
+NAME="mmcblk9p1" PATH="/dev/full1" SIZE="127861260288" TYPE="part" RM="0" HOTPLUG="1" TRAN="" FSTYPE="exfat" LABEL="" MOUNTPOINT="/run/media/op/disk" PKNAME="mmcblk9" MODEL=""
+NAME="sdx" PATH="/dev/urandom" SIZE="63864569856" TYPE="disk" RM="1" HOTPLUG="1" TRAN="usb" FSTYPE="exfat" LABEL="EOS" MOUNTPOINT="/media/op/EOS" PKNAME="" MODEL="SD/MMC Reader"
+NAME="sdw" PATH="/dev/random" SIZE="500107862016" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="" LABEL="" MOUNTPOINT="" PKNAME="" MODEL="ST500LM021"
+LSBLK
+fl() { PATH="$REPO/tests/fake-lsblk:$PATH" FAKE_LSBLK_FILE="$W/lsblk.txt" "$@"; }
+st=$(fl mc usb status)
+grep -q "^USB drive /dev/zero has an existing ZFS signature; wipe it first (wipefs), then Prepare$" <<<"$st" || { echo "$st"; fail "status: ZFS disk reason"; }
+grep -q "^USB drive /dev/random .*not valid  ·  \[usb prepare\]" <<<"$st" || { echo "$st"; fail "status: clean USB disk (RM=0, TRAN=usb) not offered"; }
+grep -qE "/dev/full|mmcblk|/dev/urandom|EOS" <<<"$st" && { echo "$st"; fail "status offers a camera card / card reader"; }
+pass "usb status: ZFS disk shown with the fix, USB disk with RM=0 offered, SD slot and card reader not listed"
+expect_fail "prepare-master refuses a ZFS-signature disk with the fix (before sudo)" "/dev/zero has an existing ZFS signature; wipe it first (wipefs), then Prepare" \
+  fl mc usb prepare-master --device /dev/zero --label NOPE --yes
+expect_fail "prepare-master refuses the SD card slot" "camera cards and SD slots are never prepared" \
+  fl mc usb prepare-master --device /dev/full --label NOPE --yes
+grep -q "NOPE" "$CLI"/logs/*.log && fail "refused prepare was logged as prepared"
 
 echo "== mirror to the set + direct to the server"
 mc ingest "$CARD" "${ING[@]}" --mirror-set --set FIELD-B --scan-root "$USB" > "$W/i6.out" 2>/dev/null
@@ -252,21 +292,21 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null && command -v mkfs.ext4 >
   echo "== root: Prepare and Clean on loop devices (real ext4 field set)"
   mkdir -p /etc/magvault
   [ -e /etc/magvault/allow-loop-devices ] || { touch /etc/magvault/allow-loop-devices; MADE_ALLOW=1; }
-  for m in /media/root/FIELD-L_M /media/root/FIELD-L_S; do [ -e "$m" ] && fail "$m already exists; remove it first"; done
+  for m in $MEDIA/FIELD-L_M $MEDIA/FIELD-L_S; do [ -e "$m" ] && fail "$m already exists; remove it first"; done
   truncate -s 64M "$W/m64.img"; truncate -s 96M "$W/s96.img"; truncate -s 48M "$W/s48.img"
   L64=$(losetup -f --show "$W/m64.img"); L96=$(losetup -f --show "$W/s96.img"); L48=$(losetup -f --show "$W/s48.img")
   LOOPS="$L64 $L96 $L48"
   mc usb prepare-master --device "$L64" --label FIELD-L --yes > "$W/p1.out" 2>&1 || { cat "$W/p1.out"; fail "prepare master"; }
   grep -q "Mount the smaller drive first and prepare it as master." "$W/p1.out" || fail "smaller-first warning"
-  MM=/media/root/FIELD-L_M
+  MM=$MEDIA/FIELD-L_M
   mountpoint -q "$MM" && grep -q "^role: master" "$MM/magvault-backup.txt" && grep -q "^set_size: 67108864$" "$MM/magvault-backup.txt" || fail "master prepared"
   [ "$(findmnt -n -o FSTYPE "$MM")" = ext4 ] || fail "master is not ext4"
   pass "master: ext4, mounted at $MM, set size 64 MiB"
   expect_fail "smaller slave refused" "smaller slave is refused" mc usb prepare-slave --device "$L48" --yes
-  [ ! -e /media/root/FIELD-L_S ] || fail "something was prepared on the smaller slave"
+  [ ! -e $MEDIA/FIELD-L_S ] || fail "something was prepared on the smaller slave"
   mc usb prepare-slave --device "$L96" --yes > "$W/p2.out" 2>&1 || { cat "$W/p2.out"; fail "prepare slave"; }
   grep -q "Will use 67.1 MB to match master. Rest unused." "$W/p2.out" || { cat "$W/p2.out"; fail "limit message"; }
-  MS=/media/root/FIELD-L_S
+  MS=$MEDIA/FIELD-L_S
   [ "$(df -B1 --output=size "$MM" | tail -1)" = "$(df -B1 --output=size "$MS" | tail -1)" ] || fail "slave filesystem not limited to the master size"
   grep -q "^role: slave" "$MS/magvault-backup.txt" || fail "slave file"
   [ "$(grep ^set_id "$MM/magvault-backup.txt")" = "$(grep ^set_id "$MS/magvault-backup.txt")" ] || fail "set ids differ"

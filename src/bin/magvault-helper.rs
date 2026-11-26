@@ -194,6 +194,9 @@ fn check_device(arg: &str) -> (PathBuf, String, u64) {
     if sys.join("partition").exists() {
         die("give the whole disk, not a partition");
     }
+    if name.starts_with("mmcblk") {
+        die("SD/MMC card slots hold camera cards; they are never prepared as field drives");
+    }
     let is_loop = name.starts_with("loop");
     if is_loop {
         if !Path::new(ALLOW_LOOP).exists() {

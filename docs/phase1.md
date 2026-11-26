@@ -44,8 +44,10 @@ magvault usb clean --set FIELD-A
 magvault projects
 ```
 
-`magvault help` lists every option. Server commands are refused in a client config and
-client commands in a server config.
+`magvault --help` lists the commands, grouped (server / client / both), one line each.
+`magvault <command> --help` (or `magvault help <command>`) shows one command: purpose,
+flags, one example. Server commands are refused in a client config and client commands in
+a server config.
 
 ## What the pieces do
 
@@ -121,6 +123,15 @@ marks a mag synced (set) or removes it (staging) only after the server answered
   X to match master. Rest unused."). Esc or Ctrl-C cancels at any prompt (Enter also
   cancels the drive pick and the y/N questions); nothing is written before sudo is accepted. A drive with pending mags cannot be prepared again (the
   set stays selectable for ingest and sync).
+- **Which drives are offered.** Whole disks that lsblk reports as removable or USB
+  (`RM=1`, `HOTPLUG=1` or `TRAN=usb`; USB hard drives report `RM=0` and are accepted via
+  `TRAN=usb`). Camera cards are never offered: SD/MMC slots (`mmcblk*`), card readers by
+  model name, and any drive with a mounted camera layout are left out of `usb status` and
+  `usb prepare`, and `prepare-master --device` refuses them (the helper also refuses
+  `mmcblk*`). A disk that still carries a ZFS, LVM, RAID or LUKS signature is refused with
+  `/dev/sdX has an existing ZFS signature; wipe it first (wipefs), then Prepare` (shown in
+  `usb status` too); Magvault never wipes such a disk itself. A disk mounted outside
+  `/media`, `/run/media`, `/mnt` is refused with "unmount it first".
 - **Clean** (`usb clean`): only when both drives are mounted, belong to the same set, list
   the same mags, and every mag is `synced`. After confirmation and sudo, the helper deletes
   the listed mag folders on both drives and nothing else; `magvault-backup.txt`, set id,
@@ -245,5 +256,12 @@ offline projects merged by name. As root it adds a real ext4 set on loop devices
 pending (Magvault and helper), Clean refused while pending, sync, Clean, set valid and
 empty, set reused. It uses the real rsync when installed, else `tests/fake-bin/rsync`.
 
+It also checks the help output (`--help` lists commands only; `ingest --help` shows ingest
+flags only) and, with a fake `lsblk` (`tests/fake-lsblk/`), that a disk with a ZFS
+signature is refused with the wipe hint while an SD slot and a USB card reader are never
+offered. The root section mounts under `/media/${SUDO_USER:-root}`, so it runs under
+`sudo` as well as in a root shell; the helper-refusal check needs root and is skipped
+otherwise.
+
 Not covered by the script (manual on courage): SSH + rrsync, the sudo prompt, real USB
-drives and automount.
+drives and automount, real ZFS/LVM signatures (lsblk needs udev to report them).

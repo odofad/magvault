@@ -548,81 +548,125 @@ fn lsblk_pairs(line: &str) -> BTreeMap<String, String> {
     out
 }
 
-/// USB / removable disks (and loop devices when `ALLOW_LOOP` exists) whose mounts are all
-/// under `/media`, `/run/media` or `/mnt`, and that are not ZFS, LVM or RAID members.
-pub fn candidate_disks() -> Result<Vec<Disk>> {
+/// A whole disk lsblk reports as removable / USB (or a loop device on test machines),
+/// either offered for Prepare or refused with the reason the operator sees.
+#[derive(Debug, Clone)]
+pub struct Candidate {
+    pub path: String,
+    pub disk: std::result::Result<Disk, String>,
+}
+
+const LSBLK_COLUMNS: &str = "NAME,PATH,SIZE,TYPE,RM,HOTPLUG,TRAN,FSTYPE,LABEL,MOUNTPOINT,PKNAME,MODEL";
+
+fn lsblk_text() -> Result<String> {
     let out = Command::new("lsblk")
-        .args([
-            "-b",
-            "-P",
-            "-o",
-            "NAME,PATH,SIZE,TYPE,RM,HOTPLUG,TRAN,FSTYPE,LABEL,MOUNTPOINT,PKNAME",
-        ])
+        .args(["-b", "-P", "-o", LSBLK_COLUMNS])
         .env("LC_ALL", "C")
         .output()
         .ctx("cannot run lsblk")?;
     if !out.status.success() {
-        crate::bail!(
-            "lsblk failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
+        crate::bail!("lsblk failed: {}", String::from_utf8_lossy(&out.stderr).trim());
     }
-    let rows: Vec<BTreeMap<String, String>> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(lsblk_pairs)
-        .collect();
-    let allow_loop = Path::new(ALLOW_LOOP).exists();
-    let mut disks = Vec::new();
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Card readers by model name (USB readers show up as ordinary `sdX` disks).
+fn is_card_reader_model(model: &str) -> bool {
+    let m = model.to_lowercase();
+    ["card reader", "cardreader", "card-reader", "sd/mmc", "sdxc", "sdhc", "microsd", "multi-card", "multi card"]
+        .iter()
+        .any(|k| m.contains(k))
+}
+
+/// Classify the whole disks in `lsblk -P` output. Offered: removable or USB disks
+/// (`RM=1`, `HOTPLUG=1` or `TRAN=usb`; USB hard drives report `RM=0`), loop devices when
+/// `allow_loop`. Not listed at all: camera cards (SD/MMC slots `mmcblk*`, card readers by
+/// model, or a mounted camera layout per `is_camera`). Refused with a reason: disks with a
+/// ZFS / LVM / RAID / LUKS signature, disks mounted outside /media, /run/media, /mnt.
+pub fn classify_disks(text: &str, allow_loop: bool, is_camera: &dyn Fn(&Path) -> bool) -> Vec<Candidate> {
+    let rows: Vec<BTreeMap<String, String>> = text.lines().map(lsblk_pairs).collect();
+    let mut out = Vec::new();
     for r in &rows {
         let g = |k: &str| r.get(k).cloned().unwrap_or_default();
         let kind = g("TYPE");
+        let name = g("NAME");
         let removable = g("RM") == "1" || g("HOTPLUG") == "1" || g("TRAN") == "usb";
         let ok_kind = (kind == "disk" && removable) || (kind == "loop" && allow_loop);
         let size: u64 = g("SIZE").parse().unwrap_or(0);
         if !ok_kind || size == 0 {
             continue;
         }
-        let name = g("NAME");
         let family: Vec<&BTreeMap<String, String>> = rows
             .iter()
             .filter(|c| c.get("NAME") == Some(&name) || c.get("PKNAME") == Some(&name))
             .collect();
-        let bad_fs = family.iter().any(|c| {
-            matches!(
-                c.get("FSTYPE").map(String::as_str),
-                Some("zfs_member" | "LVM2_member" | "linux_raid_member" | "crypto_LUKS")
-            )
-        });
         let mounts: Vec<PathBuf> = family
             .iter()
             .filter_map(|c| c.get("MOUNTPOINT"))
             .filter(|m| !m.is_empty())
             .map(PathBuf::from)
             .collect();
-        let system = mounts
-            .iter()
-            .any(|m| !discover::MOUNT_PARENTS.iter().any(|p| m.starts_with(p)));
-        if bad_fs || system {
+        if name.starts_with("mmcblk") || is_card_reader_model(&g("MODEL")) || mounts.iter().any(|m| is_camera(m)) {
             continue;
         }
-        let backup = mounts
-            .iter()
-            .find_map(|m| BackupFile::load(m).ok().flatten());
+        let path = g("PATH");
+        let mut sigs: Vec<&str> = Vec::new();
+        for c in &family {
+            let sig = match c.get("FSTYPE").map(String::as_str) {
+                Some("zfs_member") => "ZFS",
+                Some("LVM2_member") => "LVM",
+                Some("linux_raid_member") => "RAID",
+                Some("crypto_LUKS") => "LUKS",
+                _ => continue,
+            };
+            if !sigs.contains(&sig) {
+                sigs.push(sig);
+            }
+        }
+        if !sigs.is_empty() {
+            out.push(Candidate {
+                disk: Err(format!(
+                    "{path} has an existing {} signature; wipe it first (wipefs), then Prepare",
+                    sigs.join("/")
+                )),
+                path,
+            });
+            continue;
+        }
+        if let Some(m) = mounts.iter().find(|m| !discover::MOUNT_PARENTS.iter().any(|p| m.starts_with(p))) {
+            out.push(Candidate {
+                disk: Err(format!(
+                    "{path} is mounted at {} (outside /media, /run/media, /mnt); unmount it first, then Prepare",
+                    esc(&m.display().to_string())
+                )),
+                path,
+            });
+            continue;
+        }
+        let backup = mounts.iter().find_map(|m| BackupFile::load(m).ok().flatten());
         let label = family
             .iter()
             .filter_map(|c| c.get("LABEL"))
             .find(|l| !l.is_empty())
             .cloned()
             .unwrap_or_default();
-        disks.push(Disk {
-            path: g("PATH"),
-            size,
-            label,
-            mounts,
-            backup,
+        out.push(Candidate {
+            disk: Ok(Disk { path: path.clone(), size, label, mounts, backup }),
+            path,
         });
     }
-    Ok(disks)
+    out
+}
+
+/// Whole disks lsblk reports (offered and refused), camera cards left out.
+pub fn candidates() -> Result<Vec<Candidate>> {
+    let is_camera = |m: &Path| discover::layout_of(m, &[]).is_some();
+    Ok(classify_disks(&lsblk_text()?, Path::new(ALLOW_LOOP).exists(), &is_camera))
+}
+
+/// Disks that can be offered for Prepare (see `classify_disks`).
+pub fn candidate_disks() -> Result<Vec<Disk>> {
+    Ok(candidates()?.into_iter().filter_map(|c| c.disk.ok()).collect())
 }
 
 // ---- privileged helper -----------------------------------------------------------------------
@@ -788,4 +832,44 @@ mod tests {
         assert_eq!(r["LABEL"], "NEW 64");
         assert_eq!(r["MOUNTPOINT"], "");
     }
+    #[test]
+    fn prepare_candidates_from_lsblk() {
+        // Modelled on rafiki: OS NVMe, SD slot with a camera card, a USB hard drive (RM=0,
+        // TRAN=usb) with an old ZFS pool, one with ext4 + LVM, a clean USB drive, a USB card
+        // reader, a USB drive mounted as a system path, and a loop device.
+        let t = r#"NAME="nvme0n1" PATH="/dev/nvme0n1" SIZE="512110190592" TYPE="disk" RM="0" HOTPLUG="0" TRAN="nvme" FSTYPE="" LABEL="" MOUNTPOINT="" PKNAME="" MODEL="Samsung SSD"
+NAME="nvme0n1p2" PATH="/dev/nvme0n1p2" SIZE="511000000000" TYPE="part" RM="0" HOTPLUG="0" TRAN="" FSTYPE="ext4" LABEL="" MOUNTPOINT="/" PKNAME="nvme0n1" MODEL=""
+NAME="mmcblk0" PATH="/dev/mmcblk0" SIZE="127865454592" TYPE="disk" RM="0" HOTPLUG="1" TRAN="" FSTYPE="" LABEL="" MOUNTPOINT="" PKNAME="" MODEL=""
+NAME="mmcblk0p1" PATH="/dev/mmcblk0p1" SIZE="127861260288" TYPE="part" RM="0" HOTPLUG="1" TRAN="" FSTYPE="exfat" LABEL="" MOUNTPOINT="/run/media/rafiki/disk" PKNAME="mmcblk0" MODEL=""
+NAME="sda" PATH="/dev/sda" SIZE="320072933376" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="" LABEL="" MOUNTPOINT="" PKNAME="" MODEL="ST320LM010"
+NAME="sda1" PATH="/dev/sda1" SIZE="320000000000" TYPE="part" RM="0" HOTPLUG="0" TRAN="" FSTYPE="zfs_member" LABEL="wildraid" MOUNTPOINT="" PKNAME="sda" MODEL=""
+NAME="sdb" PATH="/dev/sdb" SIZE="500107862016" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="" LABEL="" MOUNTPOINT="" PKNAME="" MODEL="ST500LM021"
+NAME="sdb1" PATH="/dev/sdb1" SIZE="1000000000" TYPE="part" RM="0" HOTPLUG="0" TRAN="" FSTYPE="ext4" LABEL="boot" MOUNTPOINT="" PKNAME="sdb" MODEL=""
+NAME="sdb2" PATH="/dev/sdb2" SIZE="499000000000" TYPE="part" RM="0" HOTPLUG="0" TRAN="" FSTYPE="LVM2_member" LABEL="" MOUNTPOINT="" PKNAME="sdb" MODEL=""
+NAME="sdc" PATH="/dev/sdc" SIZE="1000204886016" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="ext4" LABEL="SPARE" MOUNTPOINT="/media/rafiki/SPARE" PKNAME="" MODEL="Elements 25A2"
+NAME="sdd" PATH="/dev/sdd" SIZE="63864569856" TYPE="disk" RM="1" HOTPLUG="1" TRAN="usb" FSTYPE="" LABEL="" MOUNTPOINT="" PKNAME="" MODEL="SD/MMC Reader"
+NAME="sdd1" PATH="/dev/sdd1" SIZE="63860375552" TYPE="part" RM="1" HOTPLUG="1" TRAN="" FSTYPE="exfat" LABEL="EOS" MOUNTPOINT="/media/rafiki/EOS" PKNAME="sdd" MODEL=""
+NAME="sde" PATH="/dev/sde" SIZE="2000398934016" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="ext4" LABEL="" MOUNTPOINT="/srv/backup" PKNAME="" MODEL="My Passport"
+NAME="sdf" PATH="/dev/sdf" SIZE="31914983424" TYPE="disk" RM="1" HOTPLUG="1" TRAN="usb" FSTYPE="exfat" LABEL="A7S" MOUNTPOINT="/media/rafiki/A7S" PKNAME="" MODEL="Flash Drive"
+NAME="loop0" PATH="/dev/loop0" SIZE="67108864" TYPE="loop" RM="0" HOTPLUG="0" TRAN="" FSTYPE="" LABEL="" MOUNTPOINT="" PKNAME="" MODEL=""
+"#;
+        let camera = |m: &Path| m == Path::new("/media/rafiki/A7S");
+        let c = classify_disks(t, false, &camera);
+        let paths: Vec<&str> = c.iter().map(|c| c.path.as_str()).collect();
+        assert_eq!(paths, vec!["/dev/sda", "/dev/sdb", "/dev/sdc", "/dev/sde"], "no NVMe, SD slot, card reader, camera card, loop");
+        assert_eq!(
+            c[0].disk.as_ref().unwrap_err(),
+            "/dev/sda has an existing ZFS signature; wipe it first (wipefs), then Prepare"
+        );
+        assert_eq!(
+            c[1].disk.as_ref().unwrap_err(),
+            "/dev/sdb has an existing LVM signature; wipe it first (wipefs), then Prepare"
+        );
+        let ok = c[2].disk.as_ref().unwrap();
+        assert_eq!((ok.size, ok.label.as_str()), (1000204886016, "SPARE"), "USB drive with RM=0 accepted via TRAN=usb");
+        assert!(c[3].disk.as_ref().unwrap_err().contains("mounted at /srv/backup (outside /media"));
+        let with_loop = classify_disks(t, true, &camera);
+        assert_eq!(with_loop.last().unwrap().path, "/dev/loop0");
+    }
 }
+

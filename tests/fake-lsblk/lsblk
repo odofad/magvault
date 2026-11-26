@@ -1,0 +1,4 @@
+#!/bin/sh
+# Test double for `lsblk -b -P -o …` (tests/e2e-phase1.sh): prints the rows in
+# $FAKE_LSBLK_FILE. Device paths in the rows must exist (the e2e uses /dev/zero etc.).
+case " $* " in *" -P "*) cat "${FAKE_LSBLK_FILE:?}" ;; *) echo "fake lsblk: only -P is supported" >&2; exit 1 ;; esac

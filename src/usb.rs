@@ -47,12 +47,12 @@ pub fn status(scan_roots: &[PathBuf]) -> Result<()> {
     // Drives that are not members of a set: removable disks (real), or scan-root folders
     // (fixtures). Only these can be prepared.
     if scan_roots.is_empty() {
-        for d in fieldset::candidate_disks()
-            .unwrap_or_default()
-            .iter()
-            .filter(|d| d.backup.is_none())
-        {
-            println!("USB drive {}  ·  not valid  ·  [usb prepare]", d.line());
+        for c in fieldset::candidates().unwrap_or_default() {
+            match &c.disk {
+                Ok(d) if d.backup.is_none() => println!("USB drive {}  ·  not valid  ·  [usb prepare]", d.line()),
+                Ok(_) => {}
+                Err(why) => println!("USB drive {why}"),
+            }
         }
     } else {
         let in_roots = |m: &Path| scan_roots.iter().any(|r| m.starts_with(r));
@@ -115,14 +115,15 @@ fn pick_disk(disks: &[Disk], exclude: Option<&str>, what: &str) -> Result<Option
 
 fn disk_by_path(path: &str) -> Result<Disk> {
     let want = std::fs::canonicalize(path).map_err(|_| Error(format!("{path} not found")))?;
-    fieldset::candidate_disks()?
+    let found = fieldset::candidates()?
         .into_iter()
-        .find(|d| std::fs::canonicalize(&d.path).ok().as_ref() == Some(&want))
-        .ok_or_else(|| {
-            Error(format!(
-                "{path} is not a removable drive that can be prepared"
-            ))
-        })
+        .find(|c| std::fs::canonicalize(&c.path).ok().as_ref() == Some(&want));
+    match found {
+        Some(c) => c.disk.map_err(Error),
+        None => Err(Error(format!(
+            "{path} is not a USB or removable whole disk that can be prepared (camera cards and SD slots are never prepared)"
+        ))),
+    }
 }
 
 /// Master: format the whole drive; its size becomes the set size.

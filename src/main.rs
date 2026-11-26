@@ -12,6 +12,7 @@ mod error;
 mod gate;
 mod hash;
 mod hash_consts;
+mod help;
 mod ingest;
 mod init;
 mod interrupt;
@@ -32,57 +33,6 @@ use error::{Error, Result};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const USAGE: &str = "\
-magvault — archive and retrieval for camera media mags (Phases 0-1)
-
-USAGE
-  magvault [--config <dir>] <command> [options]
-
-SERVER COMMANDS (path.conf without `mode: client`)
-  init        Create a config directory, data roots, starter profiles and the database
-                --root <dir>          data directory for a new path.conf
-                --mode client         create a client config instead (see CLIENT)
-                --server <host>       (client) server host for path.conf
-                --write-pointer       remember the config dir in ~/.config/magvault/config-dir
-  ingest [<source>]
-              Probe a card (or pick a detected one), confirm, hash, verified rsync copy
-              into mags/<YYYYMMDD>_<uuid>/, magcard.txt + ASC MHL, database, queued 320p job.
-                --project <name> | --project-id <uuid>
-                --camera <id> --format <v> --gamma <v> --gamut <v> --shoot-date <YYYY-MM-DD>
-                --notes <text>  --yes  --scan-root <dir> (card fixtures; repeatable)
-  reconcile <mag>... | --all [--verify-hashes]
-              magcard.txt vs database: database wins for metadata (card backed up);
-              manifest, file and orphan-folder differences are reported only.
-  serve [--once]
-              Commit mags uploaded by clients (verify against their SHA-256, then the same
-              transaction as a server ingest). Publishes the open-project list for clients.
-  gate --spool <dir> --results <dir> --client <label> [--rrsync <path>]
-              Forced command for a client's SSH key (reads SSH_ORIGINAL_COMMAND).
-
-CLIENT COMMANDS (path.conf with `mode: client`)
-  ingest [<source>]   as above, plus:
-                --via staging|set|direct   default staging (card → local staging → server)
-                --mirror-set               also copy to the field backup set
-                --set <label>              which field set (if several are mounted)
-                --no-sync                  do not contact the server now (mag stays pending)
-  sync [--set <label>]
-              Send pending mags (local staging and field sets) to the server; verify,
-              commit, then mark synced (set) or remove (staging).
-  usb status                    field sets, pending / synced, not-valid drives
-  usb prepare                   the Prepare popup: master (smaller drive) then slave
-  usb prepare-master --device <dev> --label <SET> [--yes]
-  usb prepare-slave  --device <dev> [--set <SET>] [--yes]
-  usb clean [--set <SET>] [--yes]
-              Delete the mags on both drives of a fully synced set (keeps the set).
-  projects                      open projects (from the server, else the local cache)
-
-BOTH
-  cards [--scan-root <dir>]...  detected camera cards (mounted under /media, /run/media, /mnt)
-
-CONFIG
-  The config directory comes from --config, else MAGVAULT_CONFIG, else the pointer file
-  ~/.config/magvault/config-dir or /etc/magvault/config-dir.
-";
 
 struct Cli {
     config: Option<String>,
@@ -166,7 +116,8 @@ impl Cli {
     fn reject_unknown(&self, allowed: &[&str]) -> Result<()> {
         for (n, _) in &self.opts {
             if !allowed.contains(&n.as_str()) {
-                bail!("unknown option {n} for `{}` (see `magvault --help`)", self.command.as_deref().unwrap_or(""));
+                let c = self.command.as_deref().unwrap_or("");
+                bail!("unknown option {n} for `{c}` (see `magvault {c} --help`)");
             }
         }
         Ok(())
@@ -266,11 +217,25 @@ fn run() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     let Some(cmd) = cli.command.clone() else {
-        print!("{USAGE}");
+        print!("{}", help::TOP);
         return Ok(if cli.flag(&["--help", "-h"]) { ExitCode::SUCCESS } else { ExitCode::from(2) });
     };
-    if cli.flag(&["--help", "-h"]) || cmd == "help" {
-        print!("{USAGE}");
+    // `magvault help [<command>]` and `magvault <command> --help`.
+    let help_for = if cmd == "help" {
+        Some(cli.positional.first().cloned())
+    } else if cli.flag(&["--help", "-h"]) {
+        Some(Some(cmd.clone()))
+    } else {
+        None
+    };
+    if let Some(topic) = help_for {
+        match topic {
+            None => print!("{}", help::TOP),
+            Some(t) => match help::command(&t) {
+                Some(text) => print!("{text}"),
+                None => bail!("unknown command {t:?} (see `magvault --help`)"),
+            },
+        }
         return Ok(ExitCode::SUCCESS);
     }
     match cmd.as_str() {
