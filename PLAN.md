@@ -550,6 +550,9 @@ This is field USB only. It is not related to zmag primary/backup roles.
 - Only a Magvault-prepared drive (has valid `magvault-backup.txt` at root) can be selected as a backup target.
 - Any other drive is shown as “not valid”.
 - Not-valid drives offer a **Prepare** action. Prepare opens a popup. It is not inline on the main ingest screen.
+- USB hard disks are valid Prepare targets even when the kernel reports them non-removable (`RM=0`). Detect them by USB transport (`TRAN=usb`).
+- Camera cards and card-reader devices (for example `mmcblk`) are not Prepare targets. `usb status` must not offer Prepare on them.
+- A disk that still has a ZFS, LVM, RAID, or LUKS signature is refused. The message must name the signature and say to wipe it first (`wipefs`). Magvault does not auto-wipe. It must not say only “not a removable drive.”
 
 **Prepare popup**
 1. Warning: “Mount the smaller drive first and prepare it as master.”
