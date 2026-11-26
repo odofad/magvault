@@ -522,6 +522,279 @@ A slave cannot be prepared before its master exists. Esc closes the popup and re
 ```
 
 
+## Clean action for field backup sets
+
+Source of truth is `PLAN.md` ("Clean" under "USB drive diagnostics and prepare"). Field USB only; not related to zmag roles.
+
+- **Offered only on a fully synced set.** When every mag on the set is synced (no pending), the set row shows `[c Clean]`. A set with any pending mag does not offer Clean (see the pending row in the Prepare section above).
+- **Clean popup** (`c` on a fully synced set): "All mags on FIELD-A are on the server. Wipe master and slave?" Sudo password is required and nothing is deleted until it is accepted. Esc cancels.
+- **What it does:** deletes the mag folders on both drives. It keeps `magvault-backup.txt`, the set id, the size limit and the master / slave roles.
+- **After clean** the set is empty, still valid and ready for new mags. It does not become "not valid" and is not re-prepared. Prepare is only for a new set (different drives, different size, or a drive that was never prepared). The action is logged.
+
+### Set fully synced: Clean offered, 150x42
+
+```text
+ MAGVAULT INGEST  ·  ingest pipeline                                                                                    ● server connected  ·  odofad
+╔═ 1 Detected ═══════════════════╗┌─ 2 Files ────────────────────────────────────────────────────┐┌─ 3 Project ──────────────────────────────────────┐
+║                                ║│                                                              ││ Project  ACME_Campaign_2025                 ▾    │
+║   Sony A7S III          128 GB ║│ /media/magvault/GENERIC_64                                   ││ (open projects only)                             │
+║   /dev/sdb1 · exFAT            ║│ ├─ DCIM                                                      ││ n new project · UUID on create                   │
+║   /media/magvault/A7SIII_128   ║│ ├─ MP_ROOT                                                   │└──────────────────────────────────────────────────┘
+║   ● ready                      ║│ ├─ CLIP                                                      │┌─ 4 Details ──────────────────────────────────────┐
+║                                ║│ │  ├─ A001_C001_0101R7.mov    [clip]                         ││ Camera     Sony A7S III                       ▾  │
+║   RED Komodo            256 GB ║│ │  ├─ A001_C001_0102R7.mov    [clip]                         ││ Format     ProRes RAW                         ▾  │
+║   /dev/sdc1 · exFAT            ║│ │  ├─ A001_C002_0101R7.mov    [clip]                         ││ Gamma      A7SIII S-Log3                      ▾  │
+║   /media/magvault/RED_256      ║│ │  └─ A001_C002_0102R7.mov    [clip]                         ││ Gamut      Sony S-Gamut3.Cine                 ▾  │
+║   ● ready                      ║│ ├─ MISC                                                      ││ Shoot day  2025-05-20   guessed                  │
+║                                ║│ │  └─ .DS_Store               [skipped]                      ││ Notes      (optional)                            │
+║ ▶ Generic DCIM           64 GB ║│ └─ INFO.TXT                   [sidecar]                      ││                                                  │
+║   /dev/sdd1 · FAT32            ║│                                                              ││                                                  │
+║   /media/magvault/GENERIC_64   ║│                                                              ││                                                  │
+║   ● selected                   ║│                                                              ││ Confirm before pull                              │
+║                                ║│                                                              ││ ✓ camera  ✓ gamma/gamut                          │
+║                                ║│                                                              ││ ✓ project  ✓ shoot day  ✓ target                 │
+║                                ║│                                                              ││ Missing profile? Admin only.                     │
+║                                ║│                                                              ││                                                  │
+║ r rescan    ↑↓ choose          ║│ 6 files · 42.7 GB                                            ││                                                  │
+║                                ║│ 1 junk file skipped                                          ││                                                  │
+╚════════════════════════════════╝└──────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────┘
+┌─ Ingest ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ [ p  PULL ]  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  0.00 B / 42.7 GB  (0%)                │
+│ → mags/20250520_<mag-uuid>  originals + magcard.txt + ascmhl/ · SHA-256 verified                                                                   │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ 5 Targets ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ [x] Local staging   /tmp/magvault-staging           writable                                                                                       │
+│ [x] Server          server:/mags                    reachable                                                                                      │
+│ [ ] USB set         FIELD-A  master + slave         64 GB · valid · synced · [ c Clean ]                                                           │
+│ [ ] USB drive       /media/odofad/NEW_64            not valid · [ o Prepare ]                                                                      │
+│ [!] Clean needs sudo. Offered only when every mag on the set is synced.                                                                            │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ Log ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ card detected   /dev/sdd1 · FAT32 · 64 GB                                                                                                          │
+│ probe done      6 files · 42.7 GB · 1 junk skipped                                                                                                 │
+│ guessed         Sony A7S III · ProRes RAW · A7SIII S-Log3 · 2025-05-20                                                                             │
+│ waiting         confirm details, then p to pull                                                                                                    │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Tab pane  ·  ↑↓ move  ·  Enter pick  ·  n new project  ·  r rescan  ·  p PULL  ·  click pane to focus  ·  Esc dashboard
+```
+
+### Clean popup, 150x42
+
+```text
+ MAGVAULT INGEST  ·  ingest pipeline                                                                                    ● server connected  ·  odofad
+╔═ 1 Detected ═══════════════════╗┌─ 2 Files ────────────────────────────────────────────────────┐┌─ 3 Project ──────────────────────────────────────┐
+║                                ║│                                                              ││ Project  ACME_Campaign_2025                 ▾    │
+║   Sony A7S III          128 GB ║│ /media/magvault/GENERIC_64                                   ││ (open projects only)                             │
+║   /dev/sdb1 · exFAT            ║│ ├─ DCIM                                                      ││ n new project · UUID on create                   │
+║   /media/magvault/A7SIII_128   ║│ ├─ MP_ROOT                                                   │└──────────────────────────────────────────────────┘
+║   ● ready                      ║│ ├─ CLIP                                                      │┌─ 4 Details ──────────────────────────────────────┐
+║                                ║│ │  ├─ A001_C001_0101R7.mov    [clip]                         ││ Camera     Sony A7S III                       ▾  │
+║   RED Komodo            256 GB ║│ │  ├─ A001_C001_0102R7.mov    [clip]                         ││ Format     ProRes RAW                         ▾  │
+║   /dev/sdc1 · exFAT            ║│ │  ├─ A001_C002_0101R7.mov    [clip]                         ││ Gamma      A7SIII S-Log3                      ▾  │
+║   /media/magvault/RED_256      ║│ │  └─ A001_C002_0102R7.mov    [clip]                         ││ Gamut      Sony S-Gamut3.Cine                 ▾  │
+║   ● ready                      ║│ ├─ MISC                                                      ││ Shoot day  2025-05-20   guessed                  │
+║                                ║│ ╔═ Clean field backup set · FIELD-A ═════════════════════════════════════════╗tional)                            │
+║ ▶ Generic DCIM           64 GB ║│ ║                                                                            ║                                   │
+║   /dev/sdd1 · FAT32            ║│ ║  All mags on FIELD-A are on the server. Wipe master and slave?             ║                                   │
+║   /media/magvault/GENERIC_64   ║│ ║                                                                            ║                                   │
+║   ● selected                   ║│ ║  Deletes the mag folders on both drives.                                   ║ pull                              │
+║                                ║│ ║  Keeps the set: magvault-backup.txt, set id, size limit, and               ║mma/gamut                          │
+║                                ║│ ║  the master / slave roles. No re-prepare.                                  ║hoot day  ✓ target                 │
+║                                ║│ ║  After clean the set is empty, still valid, ready for new mags.            ║e? Admin only.                     │
+║                                ║│ ║  This action is logged.                                                    ║                                   │
+║ r rescan    ↑↓ choose          ║│ ║                                                                            ║                                   │
+║                                ║│ ║  Sudo password  ••••••••▏                                                  ║                                   │
+╚════════════════════════════════╝└─║                                                                            ║───────────────────────────────────┘
+┌─ Ingest ──────────────────────────║  [ Enter  Wipe master and slave ]                                          ║───────────────────────────────────┐
+│ [ p  PULL ]  ░░░░░░░░░░░░░░░░░░░░░║                                                                            ║0 B / 42.7 GB  (0%)                │
+│ → mags/20250520_<mag-uuid>  origin║                                                                            ║                                   │
+└───────────────────────────────────║                                                                            ║───────────────────────────────────┘
+┌─ 5 Targets ───────────────────────║  Esc  Cancel · nothing is deleted until sudo is accepted                   ║───────────────────────────────────┐
+│ [x] Local staging   /tmp/magvault-╚════════════════════════════════════════════════════════════════════════════╝                                   │
+│ [x] Server          server:/mags                    reachable                                                                                      │
+│ [ ] USB set         FIELD-A  master + slave         64 GB · valid · synced · [ c Clean ]                                                           │
+│ [ ] USB drive       /media/odofad/NEW_64            not valid · [ o Prepare ]                                                                      │
+│ [!] Clean needs sudo. Offered only when every mag on the set is synced.                                                                            │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ Log ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ card detected   /dev/sdd1 · FAT32 · 64 GB                                                                                                          │
+│ probe done      6 files · 42.7 GB · 1 junk skipped                                                                                                 │
+│ guessed         Sony A7S III · ProRes RAW · A7SIII S-Log3 · 2025-05-20                                                                             │
+│ waiting         confirm details, then p to pull                                                                                                    │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Enter confirm · Esc cancel (back to ingest)
+```
+
+### After clean: set empty, still valid, 150x42
+
+```text
+ MAGVAULT INGEST  ·  ingest pipeline                                                                                    ● server connected  ·  odofad
+╔═ 1 Detected ═══════════════════╗┌─ 2 Files ────────────────────────────────────────────────────┐┌─ 3 Project ──────────────────────────────────────┐
+║                                ║│                                                              ││ Project  ACME_Campaign_2025                 ▾    │
+║   Sony A7S III          128 GB ║│ /media/magvault/GENERIC_64                                   ││ (open projects only)                             │
+║   /dev/sdb1 · exFAT            ║│ ├─ DCIM                                                      ││ n new project · UUID on create                   │
+║   /media/magvault/A7SIII_128   ║│ ├─ MP_ROOT                                                   │└──────────────────────────────────────────────────┘
+║   ● ready                      ║│ ├─ CLIP                                                      │┌─ 4 Details ──────────────────────────────────────┐
+║                                ║│ │  ├─ A001_C001_0101R7.mov    [clip]                         ││ Camera     Sony A7S III                       ▾  │
+║   RED Komodo            256 GB ║│ │  ├─ A001_C001_0102R7.mov    [clip]                         ││ Format     ProRes RAW                         ▾  │
+║   /dev/sdc1 · exFAT            ║│ │  ├─ A001_C002_0101R7.mov    [clip]                         ││ Gamma      A7SIII S-Log3                      ▾  │
+║   /media/magvault/RED_256      ║│ │  └─ A001_C002_0102R7.mov    [clip]                         ││ Gamut      Sony S-Gamut3.Cine                 ▾  │
+║   ● ready                      ║│ ├─ MISC                                                      ││ Shoot day  2025-05-20   guessed                  │
+║                                ║│ │  └─ .DS_Store               [skipped]                      ││ Notes      (optional)                            │
+║ ▶ Generic DCIM           64 GB ║│ └─ INFO.TXT                   [sidecar]                      ││                                                  │
+║   /dev/sdd1 · FAT32            ║│                                                              ││                                                  │
+║   /media/magvault/GENERIC_64   ║│                                                              ││                                                  │
+║   ● selected                   ║│                                                              ││ Confirm before pull                              │
+║                                ║│                                                              ││ ✓ camera  ✓ gamma/gamut                          │
+║                                ║│                                                              ││ ✓ project  ✓ shoot day  ✓ target                 │
+║                                ║│                                                              ││ Missing profile? Admin only.                     │
+║                                ║│                                                              ││                                                  │
+║ r rescan    ↑↓ choose          ║│ 6 files · 42.7 GB                                            ││                                                  │
+║                                ║│ 1 junk file skipped                                          ││                                                  │
+╚════════════════════════════════╝└──────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────┘
+┌─ Ingest ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ [ p  PULL ]  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  0.00 B / 42.7 GB  (0%)                │
+│ → mags/20250520_<mag-uuid>  originals + magcard.txt + ascmhl/ · SHA-256 verified                                                                   │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ 5 Targets ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ [x] Local staging   /tmp/magvault-staging           writable                                                                                       │
+│ [x] Server          server:/mags                    reachable                                                                                      │
+│ [ ] USB set         FIELD-A  master + slave         64 GB · valid · empty · ready for new mags                                                     │
+│ [ ] USB drive       /media/odofad/NEW_64            not valid · [ o Prepare ]                                                                      │
+│ [!] Set is empty and still valid. No re-prepare needed. Prepare is for a new set.                                                                  │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ Log ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ card detected   /dev/sdd1 · FAT32 · 64 GB                                                                                                          │
+│ probe done      6 files · 42.7 GB · 1 junk skipped                                                                                                 │
+│ guessed         Sony A7S III · ProRes RAW · A7SIII S-Log3 · 2025-05-20                                                                             │
+│ waiting         confirm details, then p to pull                                                                                                    │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Tab pane  ·  ↑↓ move  ·  Enter pick  ·  n new project  ·  r rescan  ·  p PULL  ·  click pane to focus  ·  Esc dashboard
+```
+
+### Set fully synced: Clean offered, 120x36 (minimum)
+
+```text
+ MAGVAULT INGEST  ·  ingest pipeline                                                      ● server connected  ·  odofad
+╔═ 1 Detected ═══════════════╗┌─ 2 Files ──────────────────────────────────────┐┌─ 3 Project ──────────────────────────┐
+║                            ║│                                                ││ Project  ACME_Campaign_2025     ▾    │
+║   Sony A7S III      128 GB ║│ /media/magvault/GENERIC_64                     ││ (open projects only)                 │
+║   /dev/sdb1 · exFAT        ║│ ├─ DCIM                                        ││ n new project · UUID on create       │
+║   ● ready                  ║│ ├─ MP_ROOT                                     │└──────────────────────────────────────┘
+║                            ║│ ├─ CLIP                                        │┌─ 4 Details ──────────────────────────┐
+║   RED Komodo        256 GB ║│ │  ├─ A001_C001_0101R7.mov    [clip]           ││ Camera     Sony A7S III           ▾  │
+║   /dev/sdc1 · exFAT        ║│ │  ├─ A001_C001_0102R7.mov    [clip]           ││ Format     ProRes RAW             ▾  │
+║   ● ready                  ║│ │  ├─ A001_C002_0101R7.mov    [clip]           ││ Gamma      A7SIII S-Log3          ▾  │
+║                            ║│ │  └─ A001_C002_0102R7.mov    [clip]           ││ Gamut      Sony S-Gamut3.Cine     ▾  │
+║ ▶ Generic DCIM       64 GB ║│ ├─ MISC                                        ││ Shoot day  2025-05-20   guessed      │
+║   /dev/sdd1 · FAT32        ║│ │  └─ .DS_Store               [skipped]        ││ Notes      (optional)                │
+║   ● selected               ║│ └─ INFO.TXT                   [sidecar]        ││                                      │
+║                            ║│                                                ││                                      │
+║                            ║│                                                ││ Confirm before pull                  │
+║                            ║│                                                ││ ✓ camera  ✓ gamma/gamut              │
+║                            ║│                                                ││ ✓ project  ✓ shoot day  ✓ target     │
+║                            ║│                                                ││ Missing profile? Admin only.         │
+║                            ║│                                                ││                                      │
+║                            ║│                                                ││                                      │
+║ r rescan    ↑↓ choose      ║│ 6 files · 42.7 GB                              ││                                      │
+║                            ║│ 1 junk file skipped                            ││                                      │
+╚════════════════════════════╝└────────────────────────────────────────────────┘└──────────────────────────────────────┘
+┌─ Ingest ─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ [ p  PULL ]  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  0.00 B / 42.7 GB  (0%)                │
+│ → mags/20250520_<mag-uuid>  originals + magcard.txt + ascmhl/ · SHA-256 verified                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ 5 Targets ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ [x] Local staging   /tmp/magvault-staging           writable                                                         │
+│ [x] Server          server:/mags                    reachable                                                        │
+│ [ ] USB set         FIELD-A  master + slave         64 GB · valid · synced · [c Clean]                               │
+│ [ ] USB drive       /media/odofad/NEW_64            not valid · [o Prepare]                                          │
+│ [!] Clean: needs sudo. Offered only when every mag is synced.                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Tab pane  ·  ↑↓ move  ·  Enter pick  ·  n new project  ·  r rescan  ·  p PULL  ·  click pane to focus  ·  Esc dashboard
+```
+
+### Clean popup, 120x36 (minimum)
+
+```text
+ MAGVAULT INGEST  ·  ingest pipeline                                                      ● server connected  ·  odofad
+╔═ 1 Detected ═══════════════╗┌─ 2 Files ──────────────────────────────────────┐┌─ 3 Project ──────────────────────────┐
+║                            ║│                                                ││ Project  ACME_Campaign_2025     ▾    │
+║   Sony A7S III      128 GB ║│ /media/magvault/GENERIC_64                     ││ (open projects only)                 │
+║   /dev/sdb1 · exFAT        ║│ ├─ DCIM                                        ││ n new project · UUID on create       │
+║   ● ready                  ║│ ├─ MP_ROOT                                     │└──────────────────────────────────────┘
+║                            ║│ ├─ CLIP                                        │┌─ 4 Details ──────────────────────────┐
+║   RED Komodo        256 GB ║│ │  ├─ A001_C001_0101R7.mov    [clip]           ││ Camera     Sony A7S III           ▾  │
+║   /dev/sdc1 · exFAT        ║│ │  ├─ A001_C001_0102R7.mov    [clip]           ││ Format     ProRes RAW             ▾  │
+║   ● ready            ╔═ Clean field backup set · FIELD-A ═════════════════════════════════════╗II S-Log3          ▾  │
+║                      ║                                                                        ║ S-Gamut3.Cine     ▾  │
+║ ▶ Generic DCIM       ║  All mags on FIELD-A are on the server. Wipe master and slave?         ║-05-20   guessed      │
+║   /dev/sdd1 · FAT32  ║                                                                        ║ional)                │
+║   ● selected         ║  Deletes the mag folders on both drives.                               ║                      │
+║                      ║  Keeps the set: magvault-backup.txt, set id, size limit, and           ║                      │
+║                      ║  the master / slave roles. No re-prepare.                              ║pull                  │
+║                      ║  After clean the set is empty, still valid, ready for new mags.        ║ma/gamut              │
+║                      ║  This action is logged.                                                ║oot day  ✓ target     │
+║                      ║                                                                        ║? Admin only.         │
+║                      ║  Sudo password  ••••••••▏                                              ║                      │
+║                      ║                                                                        ║                      │
+║ r rescan    ↑↓ choose║  [ Enter  Wipe master and slave ]                                      ║                      │
+║                      ║                                                                        ║                      │
+╚══════════════════════║                                                                        ║──────────────────────┘
+┌─ Ingest ─────────────║                                                                        ║──────────────────────┐
+│ [ p  PULL ]  ░░░░░░░░║  Esc  Cancel · nothing is deleted until sudo is accepted               ║  (0%)                │
+│ → mags/20250520_<mag-╚════════════════════════════════════════════════════════════════════════╝                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ 5 Targets ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ [x] Local staging   /tmp/magvault-staging           writable                                                         │
+│ [x] Server          server:/mags                    reachable                                                        │
+│ [ ] USB set         FIELD-A  master + slave         64 GB · valid · synced · [c Clean]                               │
+│ [ ] USB drive       /media/odofad/NEW_64            not valid · [o Prepare]                                          │
+│ [!] Clean: needs sudo. Offered only when every mag is synced.                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Enter confirm · Esc cancel (back to ingest)
+```
+
+### After clean: set empty, still valid, 120x36 (minimum)
+
+```text
+ MAGVAULT INGEST  ·  ingest pipeline                                                      ● server connected  ·  odofad
+╔═ 1 Detected ═══════════════╗┌─ 2 Files ──────────────────────────────────────┐┌─ 3 Project ──────────────────────────┐
+║                            ║│                                                ││ Project  ACME_Campaign_2025     ▾    │
+║   Sony A7S III      128 GB ║│ /media/magvault/GENERIC_64                     ││ (open projects only)                 │
+║   /dev/sdb1 · exFAT        ║│ ├─ DCIM                                        ││ n new project · UUID on create       │
+║   ● ready                  ║│ ├─ MP_ROOT                                     │└──────────────────────────────────────┘
+║                            ║│ ├─ CLIP                                        │┌─ 4 Details ──────────────────────────┐
+║   RED Komodo        256 GB ║│ │  ├─ A001_C001_0101R7.mov    [clip]           ││ Camera     Sony A7S III           ▾  │
+║   /dev/sdc1 · exFAT        ║│ │  ├─ A001_C001_0102R7.mov    [clip]           ││ Format     ProRes RAW             ▾  │
+║   ● ready                  ║│ │  ├─ A001_C002_0101R7.mov    [clip]           ││ Gamma      A7SIII S-Log3          ▾  │
+║                            ║│ │  └─ A001_C002_0102R7.mov    [clip]           ││ Gamut      Sony S-Gamut3.Cine     ▾  │
+║ ▶ Generic DCIM       64 GB ║│ ├─ MISC                                        ││ Shoot day  2025-05-20   guessed      │
+║   /dev/sdd1 · FAT32        ║│ │  └─ .DS_Store               [skipped]        ││ Notes      (optional)                │
+║   ● selected               ║│ └─ INFO.TXT                   [sidecar]        ││                                      │
+║                            ║│                                                ││                                      │
+║                            ║│                                                ││ Confirm before pull                  │
+║                            ║│                                                ││ ✓ camera  ✓ gamma/gamut              │
+║                            ║│                                                ││ ✓ project  ✓ shoot day  ✓ target     │
+║                            ║│                                                ││ Missing profile? Admin only.         │
+║                            ║│                                                ││                                      │
+║                            ║│                                                ││                                      │
+║ r rescan    ↑↓ choose      ║│ 6 files · 42.7 GB                              ││                                      │
+║                            ║│ 1 junk file skipped                            ││                                      │
+╚════════════════════════════╝└────────────────────────────────────────────────┘└──────────────────────────────────────┘
+┌─ Ingest ─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ [ p  PULL ]  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  0.00 B / 42.7 GB  (0%)                │
+│ → mags/20250520_<mag-uuid>  originals + magcard.txt + ascmhl/ · SHA-256 verified                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ 5 Targets ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ [x] Local staging   /tmp/magvault-staging           writable                                                         │
+│ [x] Server          server:/mags                    reachable                                                        │
+│ [ ] USB set         FIELD-A  master + slave         64 GB · valid · empty · ready for new mags                       │
+│ [ ] USB drive       /media/odofad/NEW_64            not valid · [o Prepare]                                          │
+│ [!] Set is empty and still valid. Prepare is only for a new set.                                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Tab pane  ·  ↑↓ move  ·  Enter pick  ·  n new project  ·  r rescan  ·  p PULL  ·  click pane to focus  ·  Esc dashboard
+```
+
 ## How the layout flexes
 
 | Part | 120x36 (minimum) | 150x42 (comfortable) |
@@ -546,7 +819,7 @@ Below 120x36, show a "resize terminal" message instead of a broken layout.
 | 2 | Files | tree view (e.g. `tui-tree-widget`) or `Paragraph` | Read-only preview of the probed card. Junk (e.g. `.DS_Store`) is marked skipped and never copied. |
 | 3 | Project | popup `List` over `Clear` | Lists **open** projects only. `n` creates a project; UUID assigned on create. |
 | 4 | Details | field rows + popup pickers | Camera, format, gamma, gamut come from existing profiles only. No "add new" here; new profiles belong in the admin Profile Editor. Shoot day is guessed, operator confirms. Notes optional. |
-| 5 | Targets | checkbox `List` | Local staging, server, USB backup **set** (one row: master + slave, set size, pending/synced). Only a valid set can be selected. A not-valid drive shows `not valid · Prepare`. Warning for pending/no sync. |
+| 5 | Targets | checkbox `List` | Local staging, server, USB backup **set** (one row: master + slave, set size, pending/synced). Only a valid set can be selected. A fully synced set shows `c Clean`. A not-valid drive shows `not valid · Prepare`. Warning for pending/no sync. |
 | - | Ingest bar | `Gauge` + stage line | `p` starts the pull. Shows destination `mags/<YYYYMMDD>_<mag-uuid>`. |
 | - | Log | `List` | Shown only when there are spare rows (40+). Events for this ingest. |
 
@@ -561,7 +834,8 @@ Below 120x36, show a "resize terminal" message instead of a broken layout.
 | `r` | Rescan for cards |
 | `p` | Pull (start verified copy; disabled until confirm checklist complete) |
 | `o` | Open the Prepare popup for the selected not-valid USB drive (sudo password asked inside the popup) |
-| `Esc` in popup | Cancel Prepare and return to ingest (nothing written) |
+| `Esc` in popup | Cancel Prepare or Clean and return to ingest (nothing written or deleted) |
+| `c` | Open the Clean popup for the selected set; only when every mag on it is synced (sudo password asked inside the popup) |
 | `x` | Abort (pulling state only) |
 | `l` | Show log (overlay at 120x36, strip at 150x42) |
 | `Esc` | Return to dashboard (blocked while a copy is writing) |
@@ -574,5 +848,6 @@ Below 120x36, show a "resize terminal" message instead of a broken layout.
 - **Inputs lock** during a pull. Panes 1-4 dim and ignore keys.
 - **USB validity:** only a valid matched set (master + slave, each with a valid `magvault-backup.txt` at its root) can be selected as a backup target, and it is selected as one set. Any other drive is “not valid” and offers Prepare, which opens the popup.
 - **Prepare:** master first (smaller drive), then slave (same size or larger; smaller is refused; larger is limited to the master size). A sudo password is asked at each write step and nothing is written until it is accepted. Not offered on a set while any mag is pending server sync; re-enabled once every mag has synced. A valid set with pending mags remains selectable as a target.
+- **Clean:** only on a fully synced set; wipes the mag folders on both drives after the sudo password is accepted, keeps `magvault-backup.txt`, set id, size limit and roles, and leaves the set empty and valid.
 - **Pull** is the single action that starts the verified copy into the mag folder (then magcard + MHL + DB + queue). No separate “populate” step.
 - Sample values (A7S III, ProRes RAW, ACME_Campaign_2025, sizes, percentages) are placeholders.
