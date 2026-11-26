@@ -545,14 +545,25 @@ Field backups are matched pairs. High-pace, opinionated. The operator does not c
 
 This is field USB only. It is not related to zmag primary/backup roles.
 
-**USB drive diagnostics and prepare (ingest screen)**
+**USB drive diagnostics and prepare**
+
 - Only a Magvault-prepared drive (has valid `magvault-backup.txt` at root) can be selected as a backup target.
 - Any other drive is shown as “not valid”.
-- Not-valid drives offer a **Prepare** action.
-- Prepare requires the system sudo password as final confirmation. Nothing is written until the password is accepted.
-- Once prepared, Magvault will not offer Prepare again while the drive still contains mags marked “pending server sync”.
-- Prepare is only re-enabled after every mag on the drive has been successfully transferred to the server.
-- Valid drives with pending mags remain selectable as targets; they simply cannot be re-prepared until synced.
+- Not-valid drives offer a **Prepare** action. Prepare opens a popup. It is not inline on the main ingest screen.
+
+**Prepare popup**
+1. Warning: “Mount the smaller drive first and prepare it as master.”
+2. List mounted drives with sizes.
+3. Operator picks the master. Confirm size. Sudo password. Format ext4. Write `magvault-backup.txt`.
+4. Prompt for the slave. Must be the same size or larger. If smaller, refuse with a clear reason.
+5. If the slave is larger: “Will use X GB to match master. Rest unused.” Confirm. Sudo. Partition or limit to the master size. Write `magvault-backup.txt`.
+6. Esc cancels. Nothing is written until each sudo password is accepted.
+
+- Once a set is prepared, Magvault will not offer Prepare again on those drives while any mag is marked “pending server sync”.
+- Prepare is only re-enabled after every mag on the set has been successfully transferred to the server.
+- A valid set with pending mags remains selectable as a target; it simply cannot be re-prepared until synced.
+
+The main ingest screen shows the finished set (master + slave, valid, pending/synced) or “not valid · Prepare”.
 
 All targets and states are visible and choosable on the ingest screen.
 
