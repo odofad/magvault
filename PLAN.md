@@ -200,6 +200,33 @@ Single file `db/magvault.sqlite`. Files on disk remain the source of truth for m
 
 Projects, mags and clips are identified by UUID. Names are labels. The database can be rebuilt from the files on disk if it is lost.
 
+
+## Soft lock (used on a production)
+
+A mag can be soft-locked once it has been used on a production. Soft lock does not delete or hide the mag. It warns and requires an explicit override before the mag can be reused.
+
+### When a mag is soft-locked
+- Operator marks it used (or it is marked when added to an export that is marked final / delivered).
+- The lock records:
+  - locked (boolean)
+  - locked_at
+  - production_name (or project name)
+  - locked_by
+  - note (optional)
+
+### Behaviour
+- In Library, Logging, and Export the mag shows a lock indicator and the production it was assigned to.
+- Attempting to add clips from a soft-locked mag to a new export, or to start a new ingest that would reuse it, shows a warning:
+  “This mag was used on <production>. Continue anyway?”
+- Override is allowed (operator confirms). The override is logged.
+- Soft lock can be cleared by an admin (or the same operator) with a reason. Clearing is logged.
+- Cold / evicted mags can still be soft-locked. The lock travels with the mag record.
+
+### Not a hard lock
+- Files are never made immutable by the soft lock.
+- ZFS or filesystem permissions are unchanged.
+- It is a workflow warning, not a security boundary.
+
 ## Project open / closed rule
 
 - **Open** projects can receive new mags and are shown in the ingest project list.
