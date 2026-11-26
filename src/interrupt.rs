@@ -55,6 +55,15 @@ pub fn stop_child(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
+/// Restore the default SIGPIPE action, so `magvault … | head` ends quietly instead of
+/// panicking on a closed pipe (Rust ignores SIGPIPE by default).
+pub fn default_sigpipe() {
+    // SAFETY: setting a signal to SIG_DFL (0).
+    unsafe {
+        signal(13, 0);
+    }
+}
+
 pub fn requested() -> bool {
     RECEIVED.load(Ordering::SeqCst) != 0
 }

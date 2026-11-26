@@ -161,3 +161,91 @@ fn load_logging(db: &Db, mag_id: &str) -> Result<Vec<LoggingRow>> {
     }
     Ok(out)
 }
+
+/// A mag record from a `magcard.txt` written by a client (server commit of an upload).
+/// Every header value is checked; the manifest is taken as written (it is verified against
+/// the files before anything is committed).
+pub fn record_from_card(card: &MagCard) -> Result<MagRecord> {
+    let get = |k: &str| card.get(k).unwrap_or("").to_string();
+    if get("format") != FORMAT {
+        crate::bail!("magcard format must be {FORMAT}");
+    }
+    for (k, v) in &card.header {
+        crate::textfile::check_card_field(&format!("magcard {k}"), v)?;
+    }
+    let rec = MagRecord {
+        mag_uuid: get("mag_uuid"),
+        folder: get("mag_folder"),
+        project_uuid: get("project_uuid"),
+        project_name: get("project_name"),
+        project_status: get("project_status"),
+        shoot_date: get("shoot_date"),
+        camera_profile_id: card
+            .get("camera_profile_id")
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        file_format: get("file_format"),
+        gamma: get("gamma"),
+        gamut: get("gamut"),
+        source_label: get("source_label"),
+        ingested_by: get("ingested_by"),
+        ingested_at: get("ingested_at"),
+        updated_at: get("updated_at"),
+        notes: get("notes"),
+        status: "online".into(),
+        manifest: card.manifest.clone(),
+        logging: Vec::new(),
+    };
+    if !crate::util::uuid_ok(&rec.mag_uuid) || !crate::util::uuid_ok(&rec.project_uuid) {
+        crate::bail!("magcard mag_uuid / project_uuid must be UUIDs");
+    }
+    if rec.project_name.trim().is_empty() {
+        crate::bail!("magcard has no project_name");
+    }
+    if crate::time::parse_date(&rec.shoot_date).is_none() {
+        crate::bail!("magcard shoot_date {:?} is not a date", rec.shoot_date);
+    }
+    if crate::time::parse_iso(&rec.ingested_at).is_none() {
+        crate::bail!(
+            "magcard ingested_at {:?} is not a UTC time",
+            rec.ingested_at
+        );
+    }
+    if rec.manifest.is_empty() {
+        crate::bail!("magcard manifest is empty");
+    }
+    for m in &rec.manifest {
+        safe_rel(&m.rel)?;
+        if crate::time::parse_iso(&m.mtime).is_none()
+            || m.sha256.len() != 64
+            || !m.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            crate::bail!(
+                "magcard manifest line for {} is malformed",
+                crate::util::esc(&m.rel)
+            );
+        }
+    }
+    Ok(rec)
+}
+
+/// A relative path from a card or manifest: no leading `/`, no `.`/`..` or empty parts, no
+/// control characters, and not one of Magvault's own files.
+pub fn safe_rel(rel: &str) -> Result<()> {
+    let bad = rel.is_empty()
+        || rel.starts_with('/')
+        || rel.chars().any(char::is_control)
+        || rel
+            .split('/')
+            .any(|p| p.is_empty() || p == "." || p == "..")
+        || rel == crate::magcard::FILE_NAME
+        || rel.starts_with("ascmhl/")
+        || rel.starts_with(".magvault/");
+    if bad {
+        crate::bail!(
+            "unsafe or reserved path in manifest: {:?}",
+            crate::util::esc(rel)
+        );
+    }
+    Ok(())
+}

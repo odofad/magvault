@@ -238,6 +238,33 @@ pub fn parse_flat(text: &str) -> MediaInfo {
     info
 }
 
+/// Probe a mag folder (Magvault's own `magcard.txt`, `ascmhl/`, `.magvault/` left out).
+pub fn probe_mag(root: &Path) -> Result<Probe> {
+    let (files, skipped) = walk(root)?;
+    let mut files: Vec<ProbedFile> = files
+        .into_iter()
+        .filter(|f| {
+            f.rel != "magcard.txt"
+                && !f.rel.starts_with("ascmhl/")
+                && !f.rel.starts_with(".magvault/")
+        })
+        .collect();
+    let mut clips = classify(&mut files);
+    if ffprobe_available() {
+        for c in clips.iter_mut() {
+            c.info = ffprobe(&files[c.file].abs);
+        }
+    }
+    let total_bytes = files.iter().map(|f| f.size).sum();
+    Ok(Probe {
+        root: root.to_path_buf(),
+        files,
+        clips,
+        skipped,
+        total_bytes,
+    })
+}
+
 pub fn probe(root: &Path, run_ffprobe: bool) -> Result<Probe> {
     let (mut files, skipped) = walk(root)?;
     let mut clips = classify(&mut files);

@@ -43,7 +43,7 @@ No Magvault accounts. Access is the Unix user:
 **Phase 0 – Foundation** *(closed)*  
 Config, schema, manual-path verified ingest (hash at ingest), mag card + ASC MHL, conflict handling. Tested on hardware. See `docs/phase0-report.md`.
 
-**Phase 1 – Client ingest & field backups** *(in progress)*  
+**Phase 1 – Client ingest & field backups** *(implemented; hardware testing)*  
 Card discovery (multiple readers/cameras). Field backup sets: matched master + slave, smaller-first prepare popup (ext4), Clean wipes mags but keeps the set. Reconnect-and-sync, pending-sync safety.
 
 **Phase 2 – Proxies, encoder, dashboards**  
@@ -67,6 +67,4 @@ Each phase leaves a usable terminal system. Full detail is in PLAN.md.
 
 **Phase 0 closed** (2026-11-26). Manual-path ingest and reconcile work on hardware. Report: `docs/phase0-report.md`.
 
-**Phase 1 in progress.** Field backup sets, Prepare popup, and Clean are locked in PLAN.md and mocked. Implementation and hardware hammering (card discovery, readers, cameras) next.
-
-All modules have locked behaviour in PLAN.md and mockups in `docs/mockups/`. Soft lock (warn before reusing a mag used on a production) is specified. Threat model and per-phase security gate are in PLAN.md.
+**Phase 1 implemented, hardware testing next.** Card discovery, client ingest (local staging, field set, direct, mirror), the SSH forced-command gate and `magvault serve` on the server, reconnect-and-sync, and field backup sets (smaller-first Prepare as ext4, Clean keeps the set) through a root helper. Setup on courage, decisions and what is temporary: `docs/phase1.md`.

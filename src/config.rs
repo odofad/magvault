@@ -215,3 +215,139 @@ pub fn check_incoming(p: &Paths) -> Result<()> {
     }
     Ok(())
 }
+
+// ---- client mode (Phase 1) -------------------------------------------------------------
+
+/// Which kind of installation a config directory describes (`mode: client` in path.conf).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Server,
+    Client,
+}
+
+pub fn read_mode(dir: &Path) -> Result<Mode> {
+    let path_conf = dir.join("path.conf");
+    let text =
+        std::fs::read_to_string(&path_conf).ctx(format!("cannot read {}", path_conf.display()))?;
+    let mode = textfile::parse_config(&text)
+        .into_iter()
+        .find(|(k, _)| k == "mode")
+        .map(|(_, v)| v);
+    match mode.as_deref() {
+        None | Some("") | Some("server") => Ok(Mode::Server),
+        Some("client") => Ok(Mode::Client),
+        Some(other) => Err(Error(format!(
+            "{}: mode {other:?} must be server or client",
+            path_conf.display()
+        ))),
+    }
+}
+
+/// How the client reaches the server.
+#[derive(Debug, Clone)]
+pub enum ServerLink {
+    /// `ssh <user>@<host>`; the server forces `magvault gate` for this key.
+    Ssh {
+        user: String,
+        host: String,
+        key: Option<PathBuf>,
+    },
+    /// Test transport: run `magvault gate` locally and rsync straight into the spool.
+    /// Only for tests on one machine; documented in docs/phase1.md.
+    Local {
+        spool: PathBuf,
+        results: PathBuf,
+        label: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct ClientConfig {
+    pub dir: PathBuf,
+    /// Local staging (card → staging → server). Mags here are pending until the server
+    /// confirms; then they are removed (autoclean). Never /tmp.
+    pub staging: PathBuf,
+    pub logs: PathBuf,
+    pub cameras: PathBuf,
+    /// None = no server configured (offline only).
+    pub server: Option<ServerLink>,
+    pub usb_helper: PathBuf,
+}
+
+pub const DEFAULT_HELPER: &str = "/usr/lib/magvault/magvault-helper";
+
+pub fn load_client(dir: &Path) -> Result<ClientConfig> {
+    let dir = if dir.is_absolute() {
+        dir.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(dir)
+    };
+    let path_conf = dir.join("path.conf");
+    let text =
+        std::fs::read_to_string(&path_conf).ctx(format!("cannot read {}", path_conf.display()))?;
+    let kv: BTreeMap<String, String> = textfile::parse_config(&text).into_iter().collect();
+    let get = |k: &str| kv.get(k).filter(|v| !v.is_empty()).cloned();
+    let missing: Vec<&str> = ["staging", "logs", "cameras"]
+        .into_iter()
+        .filter(|k| get(k).is_none())
+        .collect();
+    if !missing.is_empty() {
+        crate::bail!(
+            "{} is missing required keys: {}",
+            path_conf.display(),
+            missing.join(", ")
+        );
+    }
+    let server = match get("server_transport").as_deref() {
+        Some("local") => {
+            let need = |k: &str| {
+                get(k).ok_or_else(|| {
+                    Error(format!(
+                        "{}: server_transport local needs {k}",
+                        path_conf.display()
+                    ))
+                })
+            };
+            Some(ServerLink::Local {
+                spool: resolve(&dir, &need("local_spool")?),
+                results: resolve(&dir, &need("local_results")?),
+                label: need("local_label")?,
+            })
+        }
+        None | Some("ssh") => get("server_host").map(|host| ServerLink::Ssh {
+            user: get("server_user").unwrap_or_else(|| "magvaultclient".into()),
+            host,
+            key: get("server_key").map(|k| resolve(&dir, &k)),
+        }),
+        Some(other) => crate::bail!(
+            "{}: server_transport {other:?} must be ssh",
+            path_conf.display()
+        ),
+    };
+    let cfg = ClientConfig {
+        staging: resolve(&dir, &get("staging").unwrap()),
+        logs: resolve(&dir, &get("logs").unwrap()),
+        cameras: resolve(&dir, &get("cameras").unwrap()),
+        server,
+        usb_helper: get("usb_helper")
+            .map(|h| resolve(&dir, &h))
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_HELPER)),
+        dir,
+    };
+    Ok(cfg)
+}
+
+/// Staging rule (PLAN.md Implementation defaults): never a temporary filesystem.
+pub fn check_not_tmp(what: &str, p: &Path) -> Result<()> {
+    std::fs::create_dir_all(p).ctx(format!("cannot create {}", p.display()))?;
+    let c = std::fs::canonicalize(p).ctx(format!("{what} {}", p.display()))?;
+    for bad in ["/tmp", "/var/tmp", "/dev/shm"] {
+        if c.starts_with(bad) {
+            crate::bail!(
+                "{what} {} is under {bad}; staging must not live in a temporary filesystem",
+                c.display()
+            );
+        }
+    }
+    Ok(())
+}

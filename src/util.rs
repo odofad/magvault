@@ -17,8 +17,8 @@ pub fn uuid_v4() -> Result<String> {
     Ok(format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32]))
 }
 
-#[cfg(test)]
-pub fn is_uuid(s: &str) -> bool {
+/// Canonical lowercase UUID (8-4-4-4-12 hex).
+pub fn uuid_ok(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 36
         && b.iter().enumerate().all(|(i, c)| match i {
@@ -153,9 +153,9 @@ mod tests {
     #[test]
     fn uuid_format() {
         let u = uuid_v4().unwrap();
-        assert!(is_uuid(&u), "{u}");
+        assert!(uuid_ok(&u), "{u}");
         assert_eq!(&u[14..15], "4");
-        assert!(!is_uuid("3F6C2A1E-9B0D-4C55-8E21-A3F9C2D41B77"));
+        assert!(!uuid_ok("3F6C2A1E-9B0D-4C55-8E21-A3F9C2D41B77"));
     }
 
     #[test]
