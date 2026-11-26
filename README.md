@@ -26,7 +26,7 @@ No Magvault accounts. Access is the Unix user:
 
 ## What it does
 
-- **Ingest** — Probe card, confirm metadata, verified copy, mag card + ASC MHL, queue 320p proxy. Prepare formats a USB as ext4 for field staging.
+- **Ingest** — Probe card, confirm metadata, verified copy, mag card + ASC MHL, queue 320p proxy. Card discovery and field backup sets in Phase 1.
 - **Logging** — Per-clip notes, tags, rating, slow-motion, shot type, names. Written to the database and to the mag card.
 - **Library** — Browse project → mag → clips. Build an export list (the export card). Works on server and client (client uses a local 320p proxy cache).
 - **Export bins** — Named folders of original clips only. Read-only browser; edit jumps to Library.
@@ -40,11 +40,11 @@ No Magvault accounts. Access is the Unix user:
 
 ## Roadmap
 
-**Phase 0 – Foundation**  
-Config, schema, manual-path verified ingest (hash at ingest), mag card + ASC MHL, conflict handling, basic shell.
+**Phase 0 – Foundation** *(closed)*  
+Config, schema, manual-path verified ingest (hash at ingest), mag card + ASC MHL, conflict handling. Tested on hardware. See `docs/phase0-report.md`.
 
-**Phase 1 – Client ingest & field backups**  
-Card discovery, full client ingest, USB Prepare (ext4), reconnect-and-sync.
+**Phase 1 – Client ingest & field backups** *(in progress)*  
+Card discovery (multiple readers/cameras). Field backup sets: matched master + slave, smaller-first prepare popup (ext4), Clean wipes mags but keeps the set. Reconnect-and-sync, pending-sync safety.
 
 **Phase 2 – Proxies, encoder, dashboards**  
 320p queue, encoder module, server and client dashboards, telemetry.
@@ -65,4 +65,8 @@ Each phase leaves a usable terminal system. Full detail is in PLAN.md.
 
 ## Status
 
-Phase 0 implemented: config directory, SQLite schema, manual-path ingest (`magvault ingest <card> --project <name>`) and magcard conflict handling (`magvault reconcile`). Build and usage: `docs/phase0.md`. All other modules have locked behaviour in PLAN.md and mockups in `docs/mockups/`.
+**Phase 0 closed** (2026-11-26). Manual-path ingest and reconcile work on hardware. Report: `docs/phase0-report.md`.
+
+**Phase 1 in progress.** Field backup sets, Prepare popup, and Clean are locked in PLAN.md and mocked. Implementation and hardware hammering (card discovery, readers, cameras) next.
+
+All modules have locked behaviour in PLAN.md and mockups in `docs/mockups/`. Soft lock (warn before reusing a mag used on a production) is specified. Threat model and per-phase security gate are in PLAN.md.
