@@ -928,6 +928,52 @@ The server dashboard must show:
 - Zpool health for every mounted zmag (overall state + any non-ONLINE drives) so failing disks are visible.
 
 
+
+## Threat model
+
+Magvault handles original camera media and production metadata. The main risks are data loss, silent corruption, unauthorized access, and privilege misuse.
+
+### Assets
+- Original camera files and sidecars (irreplaceable)
+- Mag cards, export cards, ASC MHL
+- Database (index and metadata)
+- SSH client keys and the sudo helper
+- ZFS pools and zmags
+
+### Actors
+- Operator on the server (magvault user)
+- Field client (magvaultclient via SSH key)
+- Admin (same as server user for now)
+- Remote zmag station (later)
+
+### Threats and mitigations
+
+| Threat | Mitigation |
+|--------|------------|
+| Accidental or malicious overwrite of originals | Originals are never renamed or edited. Copies are verified. Soft lock warns before reuse. |
+| Silent corruption | SHA-256 at ingest. Every later copy verified against stored hash. Mismatch is an integrity error; nothing is committed. |
+| Path traversal or write outside roots | All paths resolved against configured roots. Incoming refused if cross-filesystem or under /tmp. Clients never write directly to mags/. |
+| Unauthorized client access | SSH keys only. Forced command + restrict. AuthorizedKeysCommand. No passwords. Admin verbs refused on the client gate. |
+| Privilege escalation | Single root-owned helper. timestamp_timeout=0. Magvault user has no general sudo. No root login. |
+| Database / file divergence | Database authoritative for metadata. Manifest fixed at ingest. Mismatches reported, never auto-resolved. Magcard backed up before rewrite. |
+| Key material leakage | Private keys shown once, written to file or USB, then discarded. Not stored on the server after handover. |
+| Log injection or secret leakage | Structured log lines. No keys, passwords, or full paths that leave the system in logs. |
+| Denial of service via large ingest | Free-space checks before copy. Incoming cleaned on failure. |
+
+### Phase gate
+Each phase must pass:
+1. Functional tests on real hardware
+2. Security review against this threat model (new code paths, new privileges, new trust boundaries)
+3. Fixes for any findings
+
+Only then does the next phase start.
+
+### Out of scope for v1
+- Multi-tenant isolation beyond Unix users and SSH keys
+- Encryption at rest beyond what ZFS provides
+- Formal penetration testing
+- Protection against a compromised root or physical access to drives
+
 ## Implementation defaults
 
 These are the remaining recommendations from `docs/technical-review-and-spec.md` that are adopted as defaults. They were not owner decisions; they are the smallest consistent choices an implementer should follow unless a later decision overrides them.
