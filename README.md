@@ -67,6 +67,6 @@ Each phase leaves a usable terminal system. Full detail is in PLAN.md.
 
 **Phase 0 closed** (2026-11-26). Manual-path ingest and reconcile work on hardware. Report: `docs/phase0-report.md`.
 
-**Phase 1 implemented, hardware testing next.** Card discovery, client ingest (local staging, field set, direct, mirror), the SSH forced-command gate and `magvault serve` on the server, reconnect-and-sync, and field backup sets (smaller-first Prepare as ext4, Clean keeps the set) through a root helper. Setup on courage, decisions and what is temporary: `docs/phase1.md`.
+**Phase 1 implemented, hardware testing next.** Card discovery, client ingest (local staging, field set, direct, mirror), the SSH forced-command gate and `magvault serve` on the server, reconnect-and-sync, and field backup sets (smaller-first Prepare as ext4, Clean keeps the set) through a root helper. Terminal UI (`magvault` or `magvault ui`): client dashboard, Ingest, Prepare and Clean popups. Setup on courage, decisions and what is temporary: `docs/phase1.md`.
 
 All modules have locked behaviour in PLAN.md and mockups in `docs/mockups/`. Soft lock (warn before reusing a mag used on a production) is specified. Threat model and per-phase security gate are in PLAN.md.

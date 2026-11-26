@@ -475,6 +475,18 @@ pub fn prepare_allowed(existing: Option<&BackupFile>) -> Result<()> {
     Ok(())
 }
 
+/// The same rule for a set as a whole (the TUI's set row): blocked while any mag is pending.
+pub fn prepare_allowed_set(set: &FieldSet) -> Result<()> {
+    let p = set.pending().len();
+    if p > 0 {
+        crate::bail!(
+            "{} holds {p} mag(s) pending server sync; Prepare is blocked until every mag is synced (run `magvault sync`)",
+            set.label
+        );
+    }
+    Ok(())
+}
+
 /// Clean only on a valid set whose every mag is synced, and only when there is something to
 /// clean.
 pub fn clean_allowed(set: &FieldSet) -> Result<()> {

@@ -20,7 +20,7 @@ cleanup() {
   [ -n "${SERVE_PID:-}" ] && kill "$SERVE_PID" 2>/dev/null || true
   [ -n "${SERVE_PID:-}" ] && { wait "$SERVE_PID" 2>/dev/null || true; }
   if [ -n "${LOOPS:-}" ]; then
-    for m in $MEDIA/FIELD-L_M $MEDIA/FIELD-L_S; do mountpoint -q "$m" 2>/dev/null && umount "$m"; rmdir "$m" 2>/dev/null || true; done
+    for m in $MEDIA/FIELD-L_M $MEDIA/FIELD-L_S $MEDIA/FIELD-T_M $MEDIA/FIELD-T_S; do mountpoint -q "$m" 2>/dev/null && umount "$m"; rmdir "$m" 2>/dev/null || true; done
     for l in $LOOPS; do losetup -d "$l" 2>/dev/null || true; done
   fi
   [ "${MADE_ALLOW:-}" = 1 ] && rm -f /etc/magvault/allow-loop-devices
@@ -76,7 +76,7 @@ expect_fail "client command refused in server config" "is a client command" ms s
 
 echo "== help"
 top=$("$MV" --help)
-for c in init ingest reconcile serve gate cards sync usb projects; do grep -qE "^  $c +" <<<"$top" || fail "--help misses $c"; done
+for c in init ingest reconcile serve gate cards sync usb projects ui; do grep -qE "^  $c +" <<<"$top" || fail "--help misses $c"; done
 grep -qE -- "--(project|camera|via|device|spool|verify-hashes|once|scan-root)" <<<"$top" && { echo "$top"; fail "--help dumps command flags"; }
 [ "$(wc -l <<<"$top")" -lt 40 ] || fail "--help is long ($(wc -l <<<"$top") lines)"
 pass "magvault --help: commands only, grouped, no flag lists"
@@ -147,6 +147,55 @@ grep -q "INFO   ingest    Mag $F1 committed from client dit-a" "$SRV"/logs/*.log
 grep -q "Mag $F1 committed on the server" "$CLI"/logs/*.log || fail "client log"
 [ -z "$(ls -A "$SRV/mags/.incoming/.clients/dit-a")" ] || fail "spool not empty after commit"
 pass "card picked by discovery (no TTY), staged, verified, committed by serve (job linked to clips), staging cleaned, logged on both sides"
+
+echo "== TUI (a bot at the keyboard in a pseudo-terminal): dashboard → Ingest → pull → back"
+cat > "$W/tui1.script" <<'TUI'
+wait 1 Modules
+wait ● server connected
+send i
+wait 1 Detected
+wait A7SIII_128
+# Enter picks the one card; the probe fills Files and Details.
+send \r
+wait probe done
+send nTuiTest\r
+wait TuiTest  (new
+send p
+wait server  committed
+wait Press Enter to return to Magvault
+send \r
+wait ingested
+send \e
+wait 1 Modules
+send q
+exit 0
+TUI
+python3 "$REPO/tests/tui_pty.py" "$W/tui1.script" -- "$MV" --config "$CCFG" ui --scan-root "$ONE" > "$W/tui1.out" 2>&1 || { cat "$W/tui1.out"; fail "TUI pull"; }
+TF=$(sql "select m.folder from mags m join projects p on p.id=m.project_id where p.name='TuiTest'")
+[ -n "$TF" ] && [ -d "$SRV/mags/$TF" ] && [ ! -e "$CLI/staging/$TF" ] || fail "TUI pull did not commit through the client ingest path"
+grep -q "Mag $TF committed on the server" "$CLI"/logs/*.log || fail "TUI pull not in the client log"
+pass "TUI: card picked with Enter, new project, p pulls through client ingest (committed, staging cleaned), Esc, q"
+cat > "$W/tui2.script" <<'TUI'
+wait 1 Modules
+send i
+wait 1 Detected
+send \t\t\t\t
+send o
+wait Mount the smaller drive first and prepare it as master.
+send \e
+wait 5 Targets
+send p
+wait Pull needs:
+send x
+send \e
+wait 1 Modules
+send q
+exit 0
+TUI
+python3 "$REPO/tests/tui_pty.py" "$W/tui2.script" -- "$MV" --config "$CCFG" ui --scan-root "$ONE" > "$W/tui2.out" 2>&1 || { cat "$W/tui2.out"; fail "TUI prepare popup"; }
+pass "TUI: Prepare popup opens with the smaller-first warning, Esc closes it; Pull refuses without a card"
+expect_fail "ui refuses without a terminal" "the TUI needs a terminal" mc ui </dev/null
+[ "$("$MV" --config "$CCFG" </dev/null >/dev/null 2>&1; echo $?)" = 2 ] || fail "no command without a terminal should print help (exit 2)"
 
 echo "== offline ingest stays pending; sync later"
 mc ingest "$CARD" "${ING[@]}" --no-sync > "$W/i2.out" 2> "$W/i2.err"
@@ -292,7 +341,7 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null && command -v mkfs.ext4 >
   echo "== root: Prepare and Clean on loop devices (real ext4 field set)"
   mkdir -p /etc/magvault
   [ -e /etc/magvault/allow-loop-devices ] || { touch /etc/magvault/allow-loop-devices; MADE_ALLOW=1; }
-  for m in $MEDIA/FIELD-L_M $MEDIA/FIELD-L_S; do [ -e "$m" ] && fail "$m already exists; remove it first"; done
+  for m in $MEDIA/FIELD-L_M $MEDIA/FIELD-L_S $MEDIA/FIELD-T_M $MEDIA/FIELD-T_S; do [ -e "$m" ] && fail "$m already exists; remove it first"; done
   truncate -s 64M "$W/m64.img"; truncate -s 96M "$W/s96.img"; truncate -s 48M "$W/s48.img"
   L64=$(losetup -f --show "$W/m64.img"); L96=$(losetup -f --show "$W/s96.img"); L48=$(losetup -f --show "$W/s48.img")
   LOOPS="$L64 $L96 $L48"
@@ -332,6 +381,90 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null && command -v mkfs.ext4 >
   pass "clean: mags removed from both drives; set id, size, roles kept; set valid and empty; logged"
   mc ingest "$CARD" "${ING[@]}" --via set --set FIELD-L --no-sync >/dev/null 2>&1 || fail "set not reusable after clean"
   pass "cleaned set takes new mags without re-prepare"
+
+  echo "== root: the TUI drives Prepare and Clean (same functions as the CLI; root needs no sudo prompt)"
+  cat > "$W/tui3.script" <<TUI
+wait 1 Modules
+send i
+wait 5 Targets
+send \\t\\t\\t\\t
+down
+down
+send c
+wait Clean is not offered
+wait pending server sync
+send x
+send \\e
+wait 1 Modules
+send q
+exit 0
+TUI
+  python3 "$REPO/tests/tui_pty.py" "$W/tui3.script" -- "$MV" --config "$CCFG" ui > "$W/tui3.out" 2>&1 || { cat "$W/tui3.out"; fail "TUI clean refused while pending"; }
+  pass "TUI: Clean not offered while a mag is pending"
+  mc sync --set FIELD-L > /dev/null 2>&1 || fail "sync before TUI clean"
+  cat > "$W/tui4.script" <<TUI
+wait 1 Modules
+send i
+wait 5 Targets
+send \\t\\t\\t\\t
+down
+down
+wait [ c Clean ]
+send c
+wait All mags on FIELD-L are on the server. Wipe master and slave?
+send \\r
+wait cleaned   FIELD-L
+wait Press Enter to return to Magvault
+send \\r
+wait cleaned         FIELD-L; set still valid and empty
+send \\e
+wait 1 Modules
+send q
+exit 0
+TUI
+  python3 "$REPO/tests/tui_pty.py" "$W/tui4.script" -- "$MV" --config "$CCFG" ui > "$W/tui4.out" 2>&1 || { cat "$W/tui4.out"; fail "TUI clean"; }
+  [ -z "$(ls "$MM" | grep -E '^[0-9]{8}_')" ] && [ -z "$(ls "$MS" | grep -E '^[0-9]{8}_')" ] || fail "TUI clean left mag folders"
+  grep -q "^set_id" "$MM/magvault-backup.txt" || fail "TUI clean removed the set file"
+  pass "TUI: Clean offered once synced; popup, Enter, mags removed, set kept"
+  truncate -s 64M "$W/t64.img"; truncate -s 96M "$W/t96.img"
+  LT64=$(losetup -f --show "$W/t64.img"); LT96=$(losetup -f --show "$W/t96.img"); LOOPS="$LOOPS $LT64 $LT96"
+  cat > "$W/tui5.script" <<TUI
+wait 1 Modules
+send i
+wait 5 Targets
+send \\t\\t\\t\\t
+send o
+wait Mount the smaller drive first and prepare it as master.
+seek $LT64 
+send \\r
+wait ALL DATA ON $LT64 WILL BE DESTROYED.
+send e
+send \\x7f\\x7f\\x7f\\x7f\\x7f\\x7f\\x7fFIELD-T\\r
+wait label FIELD-T
+send \\r
+wait master ready: FIELD-T
+wait Press Enter to return to Magvault
+send \\r
+wait step 2 of 2 · slave of FIELD-T
+seek $LT96 
+wait Will use 67.1 MB to match master. Rest unused.
+send \\r\\r
+wait slave ready: set FIELD-T is complete
+wait Press Enter to return to Magvault
+send \\r
+wait set complete
+send \\e
+wait 1 Modules
+send q
+exit 0
+TUI
+  python3 "$REPO/tests/tui_pty.py" "$W/tui5.script" -- "$MV" --config "$CCFG" ui > "$W/tui5.out" 2>&1 || { cat "$W/tui5.out"; fail "TUI prepare"; }
+  for r in M S; do
+    mountpoint -q "$MEDIA/FIELD-T_$r" && [ "$(findmnt -n -o FSTYPE "$MEDIA/FIELD-T_$r")" = ext4 ] || fail "TUI prepare: FIELD-T_$r"
+  done
+  [ "$(df -B1 --output=size "$MEDIA/FIELD-T_M" | tail -1)" = "$(df -B1 --output=size "$MEDIA/FIELD-T_S" | tail -1)" ] || fail "TUI slave not limited"
+  grep -q "USB set FIELD-T  ·  master + slave  ·  67.1 MB  ·  valid" <<<"$(mc usb status)" || fail "TUI-prepared set not valid"
+  pass "TUI: Prepare popup → master (label edited) → slave (larger, limited) through the same Prepare code"
 else
   echo "== root section skipped (needs root, losetup, mkfs.ext4): Prepare/Clean on real drives not run"
 fi

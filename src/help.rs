@@ -6,6 +6,7 @@ pub const TOP: &str = "\
 magvault — archive and retrieval for camera media mags
 
 USAGE
+  magvault                       the terminal UI (client config, on a terminal)
   magvault [--config <dir>] <command> [options]
   magvault <command> --help      purpose, flags and an example for one command
   magvault help <command>        the same
@@ -18,6 +19,7 @@ SERVER COMMANDS (config without `mode: client`)
   gate        forced command for a client's SSH key (not run by hand)
 
 CLIENT COMMANDS (config with `mode: client`)
+  ui          the terminal UI: dashboard, Ingest, Prepare and Clean (same as no command)
   init        create a client config (init --mode client)
   ingest      card to local staging, field set or server; sent to the server
   sync        send pending mags to the server and mark them synced
@@ -190,6 +192,29 @@ EXAMPLE
   magvault usb prepare-master --device /dev/sdb --label FIELD-A
 ";
 
+const UI: &str = "\
+magvault ui — the terminal UI (client)
+
+Client dashboard (server connection, local staging and field sets, recent activity) and
+the Ingest screen: detected cards, project, camera details, targets (local staging,
+server, field set as one row), Pull; the Prepare popup (o) and the Clean popup (c). It
+runs the same code as `ingest`, `usb prepare-master/-slave` and `usb clean`. For Pull,
+Prepare and Clean it steps aside to the plain terminal (copy progress, sudo's own password
+prompt), then Enter returns. `magvault` with no command opens it on a terminal.
+
+KEYS
+  Esc back to the dashboard (closes a popup)   q quit (dashboard only)
+  Tab / Shift+Tab pane   ↑↓ move   Enter pick / toggle
+  dashboard: i Ingest, g Logging, l Library, s server dashboard (later phases), r refresh
+  ingest: n new project, r rescan, p pull, o Prepare, c Clean
+
+FLAGS
+  --scan-root <dir>   cards and field drives as folders in <dir> (tests, demos; repeatable)
+
+EXAMPLE
+  magvault ui
+";
+
 const PROJECTS: &str = "\
 magvault projects — open projects (client)
 
@@ -212,6 +237,7 @@ pub fn command(name: &str) -> Option<&'static str> {
         "sync" => SYNC,
         "usb" => USB,
         "projects" => PROJECTS,
+        "ui" => UI,
         _ => return None,
     })
 }
@@ -222,7 +248,7 @@ mod tests {
 
     #[test]
     fn top_level_lists_commands_without_flags() {
-        for c in ["init", "ingest", "reconcile", "serve", "gate", "cards", "sync", "usb", "projects"] {
+        for c in ["init", "ingest", "reconcile", "serve", "gate", "cards", "sync", "usb", "projects", "ui"] {
             assert!(TOP.lines().any(|l| l.trim_start().starts_with(&format!("{c} "))), "{c} missing");
             assert!(command(c).is_some(), "no help for {c}");
         }
@@ -233,7 +259,7 @@ mod tests {
 
     #[test]
     fn command_help_has_purpose_and_example() {
-        for c in ["init", "ingest", "reconcile", "serve", "gate", "cards", "sync", "usb", "projects"] {
+        for c in ["init", "ingest", "reconcile", "serve", "gate", "cards", "sync", "usb", "projects", "ui"] {
             let h = command(c).unwrap();
             assert!(h.starts_with(&format!("magvault {c} — ")), "{c}");
             assert!(h.contains("\nEXAMPLE\n"), "{c}");

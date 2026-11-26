@@ -49,6 +49,7 @@ impl Via {
     }
 }
 
+#[derive(Debug)]
 pub struct ClientArgs {
     pub base: Args,
     pub via: Via,

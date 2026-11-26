@@ -64,6 +64,11 @@ pub fn default_sigpipe() {
     }
 }
 
+/// Forget an earlier signal (the TUI runs several ingests in one process).
+pub fn reset() {
+    RECEIVED.store(0, Ordering::SeqCst);
+}
+
 pub fn requested() -> bool {
     RECEIVED.load(Ordering::SeqCst) != 0
 }

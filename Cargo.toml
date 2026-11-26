@@ -2,13 +2,15 @@
 name = "magvault"
 version = "0.1.0"
 edition = "2021"
-description = "Archive and retrieval system for camera media mags (Phase 0: config, schema, manual-path ingest, magcard conflict handling)"
+description = "Archive and retrieval system for camera media mags (Phases 0-1: ingest, client ingest, field backup sets, terminal UI)"
 publish = false
 
-# Phase 0 uses the Rust standard library only. SQLite is reached through its C API
-# (system libsqlite3, `libsqlite3-dev` on Ubuntu). SHA-256 and SHA-512/C4 are implemented
-# in src/hash.rs and checked against coreutils in the test suite.
+# One dependency: ratatui (with its crossterm backend) for the terminal UI (PLAN.md:
+# "Both versions are ratatui"). Everything else is the standard library: SQLite through
+# its C API (system libsqlite3, `libsqlite3-dev` on Ubuntu); SHA-256 and SHA-512/C4 in
+# src/hash.rs, checked against coreutils in the test suite.
 [dependencies]
+ratatui = "0.30"
 
 [profile.release]
 opt-level = 3

@@ -264,7 +264,7 @@ pub fn prepare_slave(
 }
 
 /// The master of an incomplete set (master mounted, no slave), by label or the only one.
-fn waiting_master(scan_roots: &[PathBuf], label: Option<&str>) -> Result<FieldSet> {
+pub fn waiting_master(scan_roots: &[PathBuf], label: Option<&str>) -> Result<FieldSet> {
     let sets: Vec<FieldSet> = fieldset::sets(&fieldset::drives(scan_roots))
         .into_iter()
         .filter(|s| s.master.is_some() && s.slave.is_none() && label.is_none_or(|l| l == s.label))

@@ -17,6 +17,7 @@ same order.
 ```sh
 sudo apt install build-essential libsqlite3-dev rsync ffmpeg openssh-client   # client and server
 sudo apt install openssh-server                                                # server (rrsync ships with rsync ≥ 3.2.4)
+# cargo needs crates.io access once to fetch ratatui (the only dependency); Cargo.lock pins it.
 cargo build --release      # target/release/magvault and target/release/magvault-helper
 cargo test
 tests/e2e.sh               # Phase 0 regression
@@ -48,6 +49,42 @@ magvault projects
 `magvault <command> --help` (or `magvault help <command>`) shows one command: purpose,
 flags, one example. Server commands are refused in a client config and client commands in
 a server config.
+
+## Terminal UI
+
+`magvault` with no command (on a terminal, client config) or `magvault ui` opens the TUI
+(ratatui). `magvault ui --scan-root <dir>` uses folders as cards and drives, like the
+commands. Without a terminal, `magvault` prints the help and `magvault ui` refuses.
+
+- **Dashboard** (landing): server connection (ping through the gate), local staging
+  (pending mags), field sets and not-valid drives, recent local activity (the newest log
+  lines). Modules: `i` Ingest; `g` Logging, `l` Library and `s` server dashboard are
+  stubs for later phases. `r` refreshes, `q` quits (dashboard only).
+- **Ingest**: panes 1 Detected (cards, plus "type a path…"), 2 Files (the probed card),
+  3 Project (open projects; `n` new project by name, same rule as `--project`),
+  4 Details (camera, format, gamma, gamut from the camera profile only; shoot day; notes),
+  5 Targets (local staging, server, each field set as one row, each not-valid USB drive
+  with `[ o Prepare ]`; camera cards are never listed there). Enter or Space toggles a
+  target. The checkboxes map to the CLI routes: staging = default, staging + set =
+  `--mirror-set`, set only = `--via set`, server only = `--via direct`, server unticked
+  = `--no-sync`. The warning line shows when no field set is ticked (and says so more
+  strongly when the server is not confirmed). `p` pulls once card, camera, project, shoot
+  day and a target are set; otherwise it lists what is missing.
+- **Prepare popup** (`o`): the smaller-first warning, the drives with sizes (refused ones
+  with the reason), Enter picks, Enter again confirms (`e` edits the set label). On a set
+  row waiting for its slave, `o` opens the slave step; a smaller slave is refused, a larger
+  one shows "Will use X to match master. Rest unused." Esc cancels.
+- **Clean popup** (`c`): only on a fully synced set; otherwise the reason is shown.
+
+Pull, Prepare and Clean call `client_ingest::run`, `usb::prepare_master`,
+`usb::prepare_slave` and `usb::clean` — the code behind `ingest`, `usb prepare-*` and
+`usb clean` — with the operator's choices and `--yes` (the TUI popup is the
+confirmation). For these steps the TUI steps aside: the plain terminal shows the copy
+progress or sudo's own password prompt, then "Press Enter to return to Magvault".
+Ctrl-C there aborts an ingest (nothing committed) or cancels sudo (nothing written).
+This differs from the mockups, which draw the password field and the progress bar inside
+the TUI: the password never passes through Magvault, and progress inside the TUI is left
+for later.
 
 ## What the pieces do
 
@@ -263,5 +300,16 @@ offered. The root section mounts under `/media/${SUDO_USER:-root}`, so it runs u
 `sudo` as well as in a root shell; the helper-refusal check needs root and is skipped
 otherwise.
 
+TUI: `cargo test` runs key-script tests on ratatui's TestBackend (dashboard → Ingest,
+one card picked and probed, Pull arguments, target routes, Prepare popup open / Esc /
+confirm, refused ZFS disk and smaller slave, Clean hidden while pending and offered when
+synced, pickers, resize message; `MAGVAULT_TUI_DUMP=<dir>` writes the screens as text).
+`tests/e2e-phase1.sh` also drives the real binary in a pseudo-terminal
+(`tests/tui_pty.py`, a small VT100 emulator): a full pull from the TUI through the
+client ingest to a server commit, the Prepare popup and Esc, and as root Clean (refused
+while pending, then done) and Prepare (master with an edited label, larger slave limited)
+on loop devices.
+
 Not covered by the script (manual on courage): SSH + rrsync, the sudo prompt, real USB
-drives and automount, real ZFS/LVM signatures (lsblk needs udev to report them).
+drives and automount, real ZFS/LVM signatures (lsblk needs udev to report them), the TUI
+on a real terminal with sudo's prompt.

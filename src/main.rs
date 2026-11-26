@@ -24,6 +24,7 @@ mod profiles;
 mod reconcile;
 mod serve;
 mod sync;
+mod tui;
 mod textfile;
 mod time;
 mod usb;
@@ -217,6 +218,15 @@ fn run() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     let Some(cmd) = cli.command.clone() else {
+        // No command: the TUI on a terminal with a client config; otherwise the help.
+        let tty = std::io::IsTerminal::is_terminal(&std::io::stdin()) && std::io::IsTerminal::is_terminal(&std::io::stdout());
+        let client = config::resolve_dir(cli.config.as_deref())
+            .ok()
+            .and_then(|d| config::read_mode(&d).ok().map(|m| (d, m)))
+            .filter(|(_, m)| *m == config::Mode::Client);
+        if let (false, true, Some((dir, _))) = (cli.flag(&["--help", "-h"]), tty, client) {
+            return client_command("ui", cli, &dir);
+        }
         print!("{}", help::TOP);
         return Ok(if cli.flag(&["--help", "-h"]) { ExitCode::SUCCESS } else { ExitCode::from(2) });
     };
@@ -387,6 +397,7 @@ fn server_command(cmd: &str, mut cli: Cli, dir: &std::path::Path) -> Result<Exit
             serve::run(&cfg, cli.flag(&["--once"]))?;
             Ok(ExitCode::SUCCESS)
         }
+        "ui" => bail!("the Phase 1 TUI is the client dashboard (config with `mode: client`); the server dashboard comes in Phase 2"),
         "sync" | "usb" | "projects" => bail!(
             "`{cmd}` is a client command; this config directory is a server (no `mode: client`)"
         ),
@@ -474,6 +485,15 @@ fn client_command(cmd: &str, mut cli: Cli, dir: &std::path::Path) -> Result<Exit
                 }
                 other => bail!("unknown usb command {other:?} (status, prepare, prepare-master, prepare-slave, clean)"),
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        "ui" => {
+            let roots = scan_roots(&mut cli);
+            cli.reject_unknown(&[])?;
+            if !(std::io::IsTerminal::is_terminal(&std::io::stdin()) && std::io::IsTerminal::is_terminal(&std::io::stdout())) {
+                bail!("the TUI needs a terminal; scripts use the commands (see `magvault --help`)");
+            }
+            tui::run(&cc, roots)?;
             Ok(ExitCode::SUCCESS)
         }
         "projects" => {
