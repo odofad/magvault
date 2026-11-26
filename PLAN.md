@@ -974,6 +974,13 @@ The server dashboard must show:
 
 Magvault is terminal-first. It is not an API. There is no HTTP service and no client library.
 
+### Help
+
+- `magvault --help` lists commands only, grouped (server / client / both). One line each. No flag dumps.
+- `magvault <command> --help` documents that command: purpose, flags, one example.
+- `magvault help <command>` is an alias.
+- Top-level help stays short as modules are added. Flags live on the command that uses them.
+
 Every action the TUI can perform must also be performable from the CLI with flags, so a human, a shell script, or a bot can run it without a TUI.
 
 - Non-interactive mode must work when the inputs are unambiguous (`--yes`, one discovered card, explicit paths, explicit set).
