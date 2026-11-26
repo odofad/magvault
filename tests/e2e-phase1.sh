@@ -91,23 +91,47 @@ grep -q Documents <<<"$out" && fail "a non-card folder was listed"
 pass "Sony, Canon XF and generic DCIM detected with camera guess; non-card folder ignored"
 expect_fail "several cards and --yes: operator must pick" "pass the path" mc ingest --scan-root "$MNT" --project Field --yes </dev/null
 
+echo "== ingest --yes: camera guess, card pick without a terminal"
+Y1="$W/yes1"; mkdir -p "$Y1/SONY_XAVC/PRIVATE/M4ROOT/CLIP"          # Sony layout, no DCIM, camera file names
+mkclip "$Y1/SONY_XAVC/PRIVATE/M4ROOT/CLIP/C0001.MP4"
+out=$(ms ingest --scan-root "$Y1" --project YesTest --shoot-date 2026-11-20 --yes </dev/null 2>&1) || { echo "$out"; fail "--yes, no path, no TTY, one card"; }
+grep -q -- "--yes: one card detected, using $Y1/SONY_XAVC" <<<"$out" || { echo "$out"; fail "card not picked"; }
+grep -q "camera      Sony A7S III \[sony-a7siii\]  (guessed)" <<<"$out" || { echo "$out"; fail "camera not guessed from the Sony layout"; }
+YF=$(awk '/^ingested /{print $2}' <<<"$out")
+[ -d "$SRV/mags/$YF" ] || fail "--yes ingest did not commit"
+pass "--yes, no path, no TTY, one card: picked; camera guessed from the layout (no --camera)"
+[ "$(sql "select count(*) from encoder_job_clips jc join encoder_jobs j on j.id=jc.job_id join mags m on m.id=j.mag_id where m.folder='$YF' and jc.status='queued'")" = 1 ] || fail "job clip links"
+[ "$(sql "select count(*) from clips c join mags m on m.id=c.mag_id where m.folder='$YF' and c.id not in (select clip_id from encoder_job_clips)")" = 0 ] || fail "clip without a job link"
+pass "queued 320p job is linked to the mag's clips (encoder_job_clips)"
+mkdir -p "$Y1/NOCAM/DCIM/100XYZ"; head -c 1000 /dev/urandom > "$Y1/NOCAM/DCIM/100XYZ/CLIP0001.MOV"
+expect_fail "--yes, no path, no TTY, two cards: refused" "2 cards detected and --yes picks a card only when exactly one is found; pass the path" \
+  ms ingest --scan-root "$Y1" --project YesTest --shoot-date 2026-11-20 --yes </dev/null
+expect_fail "--yes, no camera guess and no --camera: refused, says what is missing" "camera missing: no camera profile matches this card (layout: Generic DCIM); pass --camera" \
+  ms ingest "$Y1/NOCAM" --project YesTest --shoot-date 2026-11-20 --yes </dev/null
+Y2="$W/yes2"; mkdir -p "$Y2"; cp -a "$Y1/SONY_XAVC" "$Y2/"
+expect_fail "no path, no TTY, one card, no --yes: refused" "no terminal to confirm the card; re-run with --yes" \
+  ms ingest --scan-root "$Y2" --project YesTest --shoot-date 2026-11-20 </dev/null
+mkdir -p "$W/mounts-empty"
+expect_fail "no card at all: refused" "no camera card detected in $W/mounts-empty" ms ingest --scan-root "$W/mounts-empty" --project YesTest --yes </dev/null
+
 ING=(--project Field --camera sony-a7siii --shoot-date 2026-11-20 --yes)
 ONE="$W/mounts1"; mkdir -p "$ONE"; cp -a "$MNT/A7SIII_128" "$ONE/"
 CARD="$ONE/A7SIII_128"
 
 echo "== client ingest: card → local staging → server → autoclean"
-mc ingest --scan-root "$ONE" "${ING[@]}" > "$W/i1.out" 2> "$W/i1.err" || { cat "$W/i1.err"; fail "ingest via staging"; }
+mc ingest --scan-root "$ONE" "${ING[@]}" > "$W/i1.out" 2> "$W/i1.err" </dev/null || { cat "$W/i1.err"; fail "ingest via staging"; }
 F1=$(awk '/^ingested /{print $2}' "$W/i1.out")
 grep -q "server  committed" "$W/i1.out" || { cat "$W/i1.out" "$W/i1.err"; fail "not committed"; }
 [ -d "$SRV/mags/$F1" ] || fail "mag not in server mags/"
 [ ! -e "$CLI/staging/$F1" ] || fail "staging not autocleaned"
 [ "$(sql "select status, ingested_by like '%@%' from mags where folder='$F1'")" = "online|1" ] || fail "server DB row"
 [ "$(sql "select count(*) from encoder_jobs e join mags m on m.id=e.mag_id where m.folder='$F1' and e.status='queued'")" = 1 ] || fail "320p job"
+[ "$(sql "select count(*) from encoder_job_clips jc join encoder_jobs e on e.id=jc.job_id join mags m on m.id=e.mag_id where m.folder='$F1'")" = "$(sql "select count(*) from clips c join mags m on m.id=c.mag_id where m.folder='$F1'")" ] || fail "client mag: job clip links"
 grep -q "^ok  *$F1" <<<"$(ms reconcile "$F1")" || fail "server reconcile of client mag"
 grep -q "INFO   ingest    Mag $F1 committed from client dit-a" "$SRV"/logs/*.log || fail "server log"
 grep -q "Mag $F1 committed on the server" "$CLI"/logs/*.log || fail "client log"
 [ -z "$(ls -A "$SRV/mags/.incoming/.clients/dit-a")" ] || fail "spool not empty after commit"
-pass "card picked by discovery, staged, verified, committed by serve, staging cleaned, logged on both sides"
+pass "card picked by discovery (no TTY), staged, verified, committed by serve (job linked to clips), staging cleaned, logged on both sides"
 
 echo "== offline ingest stays pending; sync later"
 mc ingest "$CARD" "${ING[@]}" --no-sync > "$W/i2.out" 2> "$W/i2.err"

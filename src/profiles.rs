@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 pub struct CameraProfile {
     pub id: String,
     pub name: String,
+    /// `vendor` key (Detection); lets a recognised card layout (Sony, Canon, …) name the
+    /// camera when only one profile has that vendor.
+    pub vendor: String,
     pub card_layout: Vec<String>,
     pub filename_pattern: Vec<String>,
     pub file_formats: Vec<String>,
@@ -75,6 +78,7 @@ pub fn parse_camera(path: &Path, text: &str) -> Result<CameraProfile, String> {
     let p = CameraProfile {
         id,
         name: get("name"),
+        vendor: get("vendor"),
         card_layout: split_list(&get("card_layout")),
         filename_pattern: split_list(&get("filename_pattern")),
         file_formats: split_list(&get("file_formats")),

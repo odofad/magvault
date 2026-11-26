@@ -141,6 +141,8 @@ pub fn parse_mountinfo(text: &str) -> Vec<Volume> {
             .iter()
             .any(|p| mount.starts_with(p) && mount != Path::new(p));
         if under {
+            // A mount point listed again (mounted over) shows only the top mount.
+            out.retain(|v: &Volume| v.mount != mount);
             out.push(Volume {
                 mount,
                 device,
@@ -148,7 +150,22 @@ pub fn parse_mountinfo(text: &str) -> Vec<Volume> {
             });
         }
     }
-    out
+    // One device mounted at several places (automount plus a manual mount) is one card:
+    // keep the mount under the earliest parent in MOUNT_PARENTS (/media first).
+    let rank = |v: &Volume| MOUNT_PARENTS.iter().position(|p| v.mount.starts_with(p)).unwrap_or(usize::MAX);
+    let mut keep: Vec<Volume> = Vec::new();
+    for v in out {
+        if !v.device.starts_with("/dev/") {
+            keep.push(v);
+            continue;
+        }
+        match keep.iter().position(|k| k.device == v.device) {
+            Some(i) if rank(&v) < rank(&keep[i]) => keep[i] = v,
+            Some(_) => {}
+            None => keep.push(v),
+        }
+    }
+    keep
 }
 
 fn child_names(dir: &Path) -> Vec<(String, bool)> {
@@ -238,6 +255,50 @@ pub fn layout_of(root: &Path, cams: &[CameraProfile]) -> Option<String> {
     None
 }
 
+/// Vendor of a recognised layout (the text `layout_of` returns), for the camera guess.
+fn layout_vendor(layout: &str) -> Option<&'static str> {
+    let l = layout.to_lowercase();
+    [
+        ("sony", "Sony"),
+        ("avchd", "Sony"),
+        ("canon", "Canon"),
+        ("red (", "RED"),
+        ("blackmagic", "Blackmagic"),
+        ("gopro", "GoPro"),
+        ("dji", "DJI"),
+        ("insta360", "Insta360"),
+    ]
+    .into_iter()
+    .find(|(k, _)| l.starts_with(k))
+    .map(|(_, v)| v)
+}
+
+/// Camera guess used by discovery and ingest alike: the profile guess (card_layout /
+/// filename_pattern, `probe::guess_camera`); if that gives nothing, the recognised card
+/// layout's vendor when exactly one profile has that vendor. `Err` says why there is no
+/// guess, for the operator.
+pub fn guess_camera<'a>(p: &probe::Probe, cams: &'a [CameraProfile]) -> Result<&'a CameraProfile, String> {
+    if let Some(c) = probe::guess_camera(p, cams) {
+        return Ok(c);
+    }
+    let layout = layout_of(&p.root, cams);
+    let Some(vendor) = layout.as_deref().and_then(layout_vendor) else {
+        return Err(match layout {
+            Some(l) => format!("no camera profile matches this card (layout: {l})"),
+            None => "no camera profile matches this card (no known camera layout)".into(),
+        });
+    };
+    let same: Vec<&CameraProfile> = cams.iter().filter(|c| c.vendor.eq_ignore_ascii_case(vendor)).collect();
+    match same.as_slice() {
+        [c] => Ok(c),
+        [] => Err(format!("card layout is {vendor} but no camera profile has vendor {vendor}")),
+        many => Err(format!(
+            "card layout is {vendor} and several profiles match ({})",
+            many.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
 pub fn find_cards(vols: &[Volume], cams: &[CameraProfile]) -> Vec<Card> {
     let mut cards = Vec::new();
     for v in vols {
@@ -256,7 +317,7 @@ pub fn find_cards(vols: &[Volume], cams: &[CameraProfile]) -> Vec<Card> {
             Ok(p) => {
                 card.files = p.files.len();
                 card.bytes = p.total_bytes;
-                card.camera = probe::guess_camera(&p, cams).map(|c| (c.id.clone(), c.name.clone()));
+                card.camera = guess_camera(&p, cams).ok().map(|c| (c.id.clone(), c.name.clone()));
             }
             Err(e) => card.problem = Some(e.0.lines().next().unwrap_or("").to_string()),
         }
@@ -340,5 +401,42 @@ mod tests {
         assert_eq!(v[0].device, "/dev/sdb1");
         assert_eq!(v[0].fstype, "exfat");
         assert_eq!(v[1].mount, PathBuf::from("/run/media/op/CARD"));
+    }
+
+    #[test]
+    fn mountinfo_one_card_mounted_twice_is_one_volume() {
+        let t = "50 22 8:17 / /mnt/card rw - exfat /dev/sdb1 rw\n\
+                 51 22 8:17 / /media/op/CARD rw - exfat /dev/sdb1 rw\n\
+                 52 22 8:33 / /media/op/OTHER rw - vfat /dev/sdc1 rw\n\
+                 53 52 8:49 / /media/op/OTHER rw - vfat /dev/sdd1 rw\n";
+        let v = parse_mountinfo(t);
+        let m: Vec<_> = v.iter().map(|v| (v.mount.display().to_string(), v.device.as_str())).collect();
+        assert_eq!(m, vec![("/media/op/CARD".to_string(), "/dev/sdb1"), ("/media/op/OTHER".to_string(), "/dev/sdd1")]);
+    }
+
+    #[test]
+    fn camera_from_layout_vendor() {
+        let base = std::env::temp_dir().join(format!("mv-vendor-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fixture(&base.join("XAVC"), &["PRIVATE/M4ROOT/CLIP/C0001.MP4"]);
+        fixture(&base.join("DCIMONLY"), &["DCIM/100ABCDE/IMG_0001.MOV"]);
+        let cam = |id: &str, vendor: &str| {
+            parse_camera(
+                Path::new(&format!("{id}.cam")),
+                &format!(
+                    "name: {id}\nid: {id}\nvendor: {vendor}\ncard_layout: DCIM, PRIVATE\nfilename_pattern: A001_C*.mov\n\
+                     file_formats: XAVC S\ndefault_format: XAVC S\ngamma: S-Log3\ndefault_gamma: S-Log3\ngamut: S-Gamut3\ndefault_gamut: S-Gamut3\n"
+                ),
+            )
+            .unwrap()
+        };
+        let one = vec![cam("sony-a7siii", "Sony")];
+        let p = probe::probe(&base.join("XAVC"), false).unwrap();
+        assert_eq!(guess_camera(&p, &one).unwrap().id, "sony-a7siii");
+        let two = vec![cam("sony-a7siii", "Sony"), cam("sony-fx6", "Sony")];
+        assert!(guess_camera(&p, &two).unwrap_err().contains("several profiles match (sony-a7siii, sony-fx6)"));
+        let p = probe::probe(&base.join("DCIMONLY"), false).unwrap();
+        assert!(guess_camera(&p, &one).unwrap_err().contains("layout: Generic DCIM"));
+        let _ = fs::remove_dir_all(&base);
     }
 }

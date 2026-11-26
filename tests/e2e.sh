@@ -95,8 +95,12 @@ db = sqlite3.connect(sys.argv[1] + "/db/magvault.sqlite")
 assert db.execute("select count(*) from projects").fetchone()[0] == 1
 assert db.execute("select count(distinct project_id) from mags").fetchone()[0] == 1
 assert db.execute("select count(*) from encoder_jobs where status='queued'").fetchone()[0] == 2
+for job, mag, total in db.execute("select id, mag_id, clips_total from encoder_jobs").fetchall():
+    linked = sorted(r[0] for r in db.execute("select clip_id from encoder_job_clips where job_id=? and status='queued'", (job,)))
+    clips = sorted(r[0] for r in db.execute("select id from clips where mag_id=?", (mag,)))
+    assert linked == clips and len(clips) == total > 0, (job, linked, clips, total)
 EOF
-pass "one project, two mags, two queued 320p jobs"
+pass "one project, two mags, two queued 320p jobs, each linked to its mag's clips"
 
 echo "== conflict handling: database wins"
 out=$(mv_ reconcile "$FOLDER"); grep -q "^ok  *$FOLDER" <<<"$out" || { echo "$out"; fail "clean mag not ok"; }

@@ -723,12 +723,13 @@ pub fn commit_db(
             )?;
         }
         if queue_proxy {
+            let job_id = util::uuid_v4()?;
             db.execute(
                 "INSERT INTO encoder_jobs(id, type, mag_id, profile_id, priority, status, clips_total, output_root,
                                           requested_by, created_at)
                  VALUES (?1, '320p', ?2, ?3, 0, 'queued', ?4, ?5, ?6, ?7)",
                 &[
-                    util::uuid_v4()?.into(),
+                    job_id.as_str().into(),
                     rec.mag_uuid.as_str().into(),
                     proxy_profile.into(),
                     (clip_ids.len() as i64).into(),
@@ -737,6 +738,13 @@ pub fn commit_db(
                     now_iso.into(),
                 ],
             )?;
+            // The job's clip list (schema: encoder_job_clips), one row per clip, queued.
+            for clip_id in &clip_ids {
+                db.execute(
+                    "INSERT INTO encoder_job_clips(job_id, clip_id, status) VALUES (?1, ?2, 'queued')",
+                    &[job_id.as_str().into(), clip_id.as_str().into()],
+                )?;
+            }
         }
         // Publish the folder, then commit. If the commit fails, take the folder back out.
         std::fs::rename(staging, final_dir).ctx(format!(
@@ -1042,9 +1050,9 @@ fn choose_camera<'a>(
                 available()
             ))
         }),
-        None => probe::guess_camera(probe, cams).ok_or_else(|| {
+        None => crate::discover::guess_camera(probe, cams).map_err(|why| {
             Error(format!(
-                "could not guess the camera; pass --camera <profile id> (available: {})",
+                "camera missing: {why}; pass --camera <profile id> (available: {})",
                 available()
             ))
         }),

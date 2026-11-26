@@ -201,19 +201,38 @@ fn source_or_card(
         _ => bail!("ingest takes exactly one source directory"),
     }
     let cards = discover::find_cards(&discover::volumes(scan_roots), cams);
-    let usable: Vec<&discover::Card> = cards.iter().filter(|c| c.problem.is_none()).collect();
+    let searched = if scan_roots.is_empty() {
+        "under /media, /run/media or /mnt".to_string()
+    } else {
+        format!("in {}", scan_roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", "))
+    };
     if cards.is_empty() {
-        bail!("no camera card detected; pass the path: magvault ingest /path/to/card --project <name>");
+        bail!("no camera card detected {searched}; pass the path: magvault ingest /path/to/card --project <name>");
     }
     eprintln!("detected cards:");
     for (i, c) in cards.iter().enumerate() {
         eprintln!("  {:>2}  {}", i + 1, c.line());
     }
-    if usable.len() == 1 && yes {
-        return Ok(usable[0].volume.mount.clone());
+    let tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
+    if cards.len() == 1 {
+        let c = &cards[0];
+        if let Some(p) = &c.problem {
+            bail!("the detected card cannot be ingested: {p}");
+        }
+        if yes {
+            eprintln!("--yes: one card detected, using {}", c.volume.mount.display());
+            return Ok(c.volume.mount.clone());
+        }
+    } else if yes || !tty {
+        bail!(
+            "{} cards detected and {}; pass the path of the card: magvault ingest /path/to/card --project <name>{}",
+            cards.len(),
+            if yes { "--yes picks a card only when exactly one is found" } else { "there is no terminal to pick one" },
+            if tty { " (or run without --yes and pick one)" } else { "" }
+        );
     }
-    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        bail!("several cards (or no terminal to pick one); pass the path of the card to ingest");
+    if !tty {
+        bail!("no terminal to confirm the card; re-run with --yes (one card detected) or pass the path");
     }
     eprint!("pick a card [number; Enter cancels]: ");
     let mut line = String::new();

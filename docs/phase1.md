@@ -55,8 +55,18 @@ Mounted filesystems under `/media`, `/run/media` and `/mnt` (from `/proc/self/mo
 are checked for camera layouts: Sony XAVC (`PRIVATE/M4ROOT`), AVCHD, XDCAM (`XDROOT`),
 Canon XF (`CONTENTS/CLIPS001`), RED (`.RDM`), Blackmagic BRAW, and `DCIM` (GoPro, Canon,
 DJI, Insta360, generic), plus any `card_layout` in a camera profile. Field drives and mag
-folders are never offered as cards. The operator picks the card; with `--yes` a card is
-picked automatically only when exactly one is found. `--scan-root <dir>` (repeatable) or
+folders are never offered as cards. A device mounted twice (automount plus a manual
+mount) is listed once, preferring `/media`. The operator picks the card. With `--yes`
+(no terminal needed) the card is used when exactly one is detected; zero or several cards
+are refused with a message to pass the path (or, in a terminal, run without `--yes` and
+pick). Without `--yes` and without a terminal, ingest refuses instead of guessing.
+
+The camera guess is the same in `cards` and `ingest`: the profile guess (`card_layout`
+folders, `filename_pattern`); if that finds nothing, the recognised layout's vendor
+(Sony, Canon, RED, Blackmagic, GoPro, DJI, Insta360) when exactly one camera profile has
+that `vendor`. `--yes` accepts the guess; only with no guess and no `--camera` is ingest
+refused, with the reason (`camera missing: no camera profile matches this card (layout:
+Generic DCIM); pass --camera <profile id> (available: …)`). `--scan-root <dir>` (repeatable) or
 `MAGVAULT_SCAN_ROOTS` replaces the mount scan with "every folder in <dir> is a volume",
 which is how the fixtures are tested.
 
@@ -89,7 +99,7 @@ The client never writes into `mags/`. Each client key on the server is locked to
 `magvault serve` (server user) picks up commit requests, verifies the upload against the
 manifest in its magcard (SHA-256 per file, nothing missing or extra), checks the camera
 values against the server's profile, and then runs the Phase 0 commit (database rows,
-queued 320p job, rename into `mags/`). It writes the result into `mags/.incoming/.results/`,
+queued 320p job with its clips listed in `encoder_job_clips`, rename into `mags/`). It writes the result into `mags/.incoming/.results/`,
 which the client can read but not write, so a client cannot forge "committed". A failed
 upload is deleted from the spool and reported; the client copy stays pending.
 
@@ -129,6 +139,12 @@ password is asked every time). Two verbs, both strictly validated:
 - `usb-clean <master-mount> <slave-mount>`: the Clean rules above, checked again as root.
 
 Client sudo is used for nothing else.
+
+### 320p job clips
+
+Every queued 320p job (server ingest and client commit) lists the mag's clips in
+`encoder_job_clips` (one `queued` row per clip, same transaction as the job). Jobs queued
+before this change keep an empty list.
 
 ## Decisions taken while implementing
 
