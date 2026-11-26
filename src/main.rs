@@ -13,6 +13,7 @@ mod hash;
 mod hash_consts;
 mod ingest;
 mod init;
+mod interrupt;
 mod log;
 mod magcard;
 mod mhl;
@@ -197,18 +198,19 @@ fn run() -> Result<ExitCode> {
             let reports = reconcile::run(&cfg, &cli.positional, all, cli.flag(&["--verify-hashes"]))?;
             let mut bad = false;
             for r in &reports {
+                let folder = util::esc(&r.folder);
                 if r.integrity.is_empty() && r.rewritten.is_empty() && r.notes.is_empty() {
-                    println!("ok        {}", r.folder);
+                    println!("ok        {folder}");
                 }
                 if !r.rewritten.is_empty() {
-                    println!("rewritten {}  (database wins: {})", r.folder, r.rewritten.join(", "));
+                    println!("rewritten {folder}  (database wins: {})", r.rewritten.join(", "));
                 }
                 for n in &r.notes {
-                    println!("note      {}  {n}", r.folder);
+                    println!("note      {folder}  {}", util::esc(n));
                 }
                 for i in &r.integrity {
                     bad = true;
-                    println!("INTEGRITY {}  {i}", r.folder);
+                    println!("INTEGRITY {folder}  {}", util::esc(i));
                 }
             }
             if reports.is_empty() {
@@ -224,7 +226,12 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("error: {e}");
+            // Errors can quote card file names and labels: escape control characters per line.
+            let mut lines = e.0.lines();
+            eprintln!("error: {}", util::esc(lines.next().unwrap_or("")));
+            for l in lines {
+                eprintln!("{}", util::esc(l));
+            }
             ExitCode::from(1)
         }
     }

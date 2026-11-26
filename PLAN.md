@@ -5,7 +5,7 @@
 SHA-256 is computed at ingest, while the card is first read.
 
 - SHA-256 is stored in the magcard manifest and in the database. It is the integrity hash for all later verification.
-- ASC MHL 1.0 does not support SHA-256. The MHL stores C4 hashes (computed in the same read). SHA-256 remains the hash used for verification.
+- ASC MHL (specification 1.0; files declare hashlist version 2.0, `urn:ASC:MHL:v2.0`); C4 only. ASC MHL does not support SHA-256, so the MHL stores C4 hashes (computed in the same read). SHA-256 remains the hash used for verification.
 - Every later copy (USB backup, rsync to server, rsync to zmag) is verified against the stored SHA-256.
 - A mismatch is an integrity error and is reported. The copy is not committed.
 

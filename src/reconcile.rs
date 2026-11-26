@@ -67,7 +67,39 @@ pub fn run(cfg: &Config, targets: &[String], all: bool, verify_hashes: bool) -> 
         }
         reports.push(rep);
     }
+    if all {
+        for rep in orphan_folders(cfg, &db)? {
+            log.error("system", &format!("Folder in mags/ with no database record: {}", rep.folder), &rep.integrity);
+            reports.push(rep);
+        }
+    }
     Ok(reports)
+}
+
+/// Folders in `mags/` that the database does not know (for example after a crash between
+/// the rename into `mags/` and the database commit). Hidden entries such as `.incoming` are
+/// skipped. Reported as integrity problems; never adopted, moved or deleted (PLAN.md
+/// Threat model: "Mismatches reported, never auto-resolved").
+fn orphan_folders(cfg: &Config, db: &Db) -> Result<Vec<Report>> {
+    let known: std::collections::BTreeSet<String> =
+        db.query("SELECT folder FROM mags", &[])?.into_iter().map(|r| r[0].s()).collect();
+    let mut found = Vec::new();
+    let rd = std::fs::read_dir(&cfg.paths.mags).ctx(format!("cannot list {}", cfg.paths.mags.display()))?;
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        if !known.contains(&name) {
+            found.push(Report {
+                folder: name,
+                integrity: vec!["folder in mags/ has no database record (left as is: not adopted, not deleted)".into()],
+                ..Default::default()
+            });
+        }
+    }
+    found.sort_by(|a, b| a.folder.cmp(&b.folder));
+    Ok(found)
 }
 
 fn internal(rel: &str) -> bool {
@@ -107,7 +139,7 @@ pub fn check_one(cfg: &Config, rec: &MagRecord, camera_model: Option<&str>, veri
                 if f.size != m.size {
                     rep.integrity.push(format!("size differs from manifest: {rel} ({} vs {} bytes)", f.size, m.size));
                 } else if verify_hashes {
-                    let h = hash::hash_file(&f.abs, false, &mut |_| {}).ctx(format!("cannot read {rel}"))?;
+                    let h = hash::hash_file(&f.abs, false, &mut |_| true).ctx(format!("cannot read {rel}"))?;
                     if h.sha256 != m.sha256 {
                         rep.integrity.push(format!("SHA-256 differs from manifest: {rel}"));
                     }

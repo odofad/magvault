@@ -1,8 +1,9 @@
-//! ASC MHL (v1.0 spec, schema `urn:ASC:MHL:v2.0`) for a mag folder.
+//! ASC MHL for a mag folder: ASC MHL (specification 1.0; files declare hashlist version
+//! 2.0, `urn:ASC:MHL:v2.0`); C4 only.
 //!
 //! - Manifest file name: `<NNNN>_<foldername>_<YYYY-MM-DD>_<HHMMSS>Z.mhl` (UTC).
 //! - Chain file `ascmhl_chain.xml` lists every generation with its C4 hash.
-//! - ASC MHL 1.0 allows md5, sha1, c4, xxh64, xxh3, xxh128 — not SHA-256. Magvault
+//! - The specification allows md5, sha1, c4, xxh64, xxh3, xxh128 — not SHA-256. Magvault
 //!   writes C4 (SHA-512 based, computed in the same first read as the SHA-256 that goes
 //!   into the database and magcard). The C4 is also required for the chain file.
 //! - `magcard.txt` and `.magvault/` are listed as ignore patterns: they are rewritten

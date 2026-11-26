@@ -6,8 +6,9 @@
 # --no-devices, --no-specials, --info=progress2, --outbuf=L) by copying each listed
 # file with its modification time. Set FAKE_RSYNC_CORRUPT=1 to flip one byte in the
 # first copied file (to test integrity-error handling), FAKE_RSYNC_FAIL=<code> to exit
-# with an error after copying half the files.
-import os, shutil, sys
+# with an error after copying half the files, FAKE_RSYNC_DELAY=<seconds> to wait before
+# copying (so interrupt tests can signal it mid-copy).
+import os, shutil, sys, time
 
 args = sys.argv[1:]
 if args == ["--version"]:
@@ -36,6 +37,7 @@ src, dst = paths
 data = open(files_from, "rb").read()
 names = [n.decode() for n in (data.split(b"\0") if from0 else data.splitlines()) if n]
 fail = os.environ.get("FAKE_RSYNC_FAIL")
+time.sleep(float(os.environ.get("FAKE_RSYNC_DELAY", "0")))
 for i, rel in enumerate(names):
     if fail and i >= len(names) // 2:
         sys.stderr.write("fake rsync: simulated failure\n")

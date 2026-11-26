@@ -55,7 +55,7 @@ Hardware for early testing:
 - [ ] Ingest a test folder:
   - [ ] Mag folder created as `<YYYYMMDD>_<full-uuid>`
   - [ ] SHA-256 hashes present in magcard and database
-  - [ ] ASC MHL contains C4 hashes (ASC MHL 1.0 does not support SHA-256)
+  - [ ] ASC MHL contains C4 hashes only: ASC MHL (specification 1.0; files declare hashlist version 2.0, `urn:ASC:MHL:v2.0`); C4 only.
   - [ ] Database has mag and clip rows
   - [ ] 320p job record exists
 - [ ] Conflict test: change metadata, confirm old magcard is backed up to `.magvault/` and new card matches database

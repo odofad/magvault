@@ -27,7 +27,8 @@ pub const REQUIRED_ROOTS: &[&str] = &[
 pub struct Paths {
     pub mags: PathBuf,
     /// Ingest copies land here first and are renamed into `mags/` once verified.
-    /// Must be on the same filesystem as `mags` (rename must be atomic). Never /tmp.
+    /// Default `<mags>/.incoming` (PLAN.md "Incoming staging"): on the same filesystem as
+    /// `mags` so the rename is atomic. Never /tmp.
     pub incoming: PathBuf,
     pub proxies: PathBuf,
     pub bins: PathBuf,
@@ -143,7 +144,7 @@ pub fn load(dir: &Path) -> Result<Config> {
     let mags = get("mags");
     let incoming = match kv.get("incoming").filter(|v| !v.is_empty()) {
         Some(v) => resolve(&dir, v),
-        None => mags.parent().map(|p| p.join("incoming")).unwrap_or_else(|| dir.join("incoming")),
+        None => mags.join(".incoming"),
     };
     let paths = Paths {
         mags,

@@ -48,6 +48,21 @@ pub fn identity() -> String {
     format!("{user}@{}", hostname())
 }
 
+/// Make untrusted text safe for a terminal or a log line: every control character
+/// (newline, tab, ESC, …) is replaced by its Rust escape (`\n`, `\t`, `\u{1b}`).
+/// Card file names and volume labels come from the card and are not trusted.
+pub fn esc(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Bytes available to this user on the filesystem holding `path` (`df`, coreutils).
 pub fn free_bytes(path: &Path) -> Result<u64> {
     let out = Command::new("df")
@@ -141,6 +156,12 @@ mod tests {
         assert!(is_uuid(&u), "{u}");
         assert_eq!(&u[14..15], "4");
         assert!(!is_uuid("3F6C2A1E-9B0D-4C55-8E21-A3F9C2D41B77"));
+    }
+
+    #[test]
+    fn escapes_controls() {
+        assert_eq!(esc("a\u{1b}[2Jb\nc\td"), "a\\u{1b}[2Jb\\nc\\td");
+        assert_eq!(esc("plain ünïcode"), "plain ünïcode");
     }
 
     #[test]

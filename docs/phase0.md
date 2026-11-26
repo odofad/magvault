@@ -47,9 +47,9 @@ The config directory comes from `--config`, else `MAGVAULT_CONFIG`, else
    shoot day from the earliest media creation time (else earliest modification time), as
    a local calendar date. Format/gamma/gamut default to the profile's defaults.
 5. After confirmation, reads every file once to compute SHA-256 (and C4 for the MHL).
-6. Checks free space, then copies with
+6. Checks free space, creates and locks `<incoming>/.<folder>.lock`, then copies with
    `rsync -t --files-from=<list> --from0 --no-links --no-devices --no-specials` into
-   `incoming/<YYYYMMDD>_<uuid>/`.
+   `<mags>/.incoming/<YYYYMMDD>_<uuid>/` (the list is `<incoming>/.<folder>.files`).
 7. Verifies every copied file against the stored SHA-256 and that no file is missing or
    extra. Any mismatch: integrity error, the copy is deleted, nothing is committed.
 8. Writes `magcard.txt` and `ascmhl/`.
@@ -57,22 +57,43 @@ The config directory comes from `--config`, else `MAGVAULT_CONFIG`, else
    and a `queued` 320p encoder job; renames the folder into `mags/`; commits. If the
    commit fails the folder is moved back out.
 
-Every result and failure is written to `logs/YYYY-MM-DD.log` (UTC day).
+Every result and every failure after the confirmation (hashing read errors, a file that
+changes size while being read, not enough space, copy and verify errors, interrupts) is
+written to `logs/YYYY-MM-DD.log` (UTC day). Junk items that were skipped are listed as a
+context line of the ingest's INFO entry.
+
+Control characters in anything Magvault prints or logs (card file names, volume labels,
+ffprobe messages) are escaped (`\u{1b}`, `\n`), so a crafted file name cannot inject
+log lines or terminal escape sequences (PLAN.md Threat model, "Log injection").
+
+### Interrupts and leftovers
+
+- **Ctrl+C or SIGTERM** after the confirmation stops the ingest: hashing and verifying stop
+  at the next read, rsync is stopped (Ctrl+C reaches it directly; on SIGTERM Magvault sends
+  it SIGTERM), the staging folder and its `.files` and `.lock` are removed, and ERROR
+  `interrupted by operator (SIGINT|SIGTERM)` is logged. Before the confirmation, Ctrl+C
+  exits at once (nothing has been written). A signal that arrives during the rename into
+  `mags/` and the database commit is held off until the commit is done.
+- **SIGKILL, a crash or power loss** cannot be caught and leaves the staging folder with its
+  `.files` and `.lock` in `incoming/`. The next ingest prints a warning and logs WARN naming
+  each such folder and its files. A folder whose `.lock` is still held by a running ingest
+  is not reported. Cleanup is manual: remove the folder and its two dot files.
 
 ## Decisions taken while implementing
 
 These follow PLAN.md and the tech review; where the documents left a gap the smallest
 consistent choice was made. Each is easy to change.
 
-- **ASC MHL hash format is C4, not SHA-256.** PLAN.md says the SHA-256 hashes go into the
-  ASC MHL, but ASC MHL 1.0 only allows md5, sha1, c4, xxh64, xxh3 and xxh128, and its
-  chain file must use C4. Magvault therefore computes SHA-512 alongside SHA-256 in the
-  same read and writes C4 IDs into the MHL. SHA-256 stays the integrity hash everywhere
-  else (database, magcard, verification). Needs an owner decision; the review document's
-  claim that ASC MHL supports SHA-256 was wrong.
-- **`incoming` root.** New optional `path.conf` key (tech spec §8.1). Default: a sibling
-  `incoming/` next to `mags/`. Must be on the same filesystem as `mags` (checked) and is
-  refused under `/tmp`, `/var/tmp`, `/dev/shm`.
+- **ASC MHL: C4 only.** ASC MHL (specification 1.0; files declare hashlist version 2.0,
+  `urn:ASC:MHL:v2.0`); C4 only. The specification allows md5, sha1, c4, xxh64, xxh3 and
+  xxh128, not SHA-256, and its chain file must use C4. Magvault computes SHA-512 alongside
+  SHA-256 in the same read and writes C4 IDs into the MHL. SHA-256 stays the integrity hash
+  everywhere else (database, magcard, verification), as PLAN.md "Hashing" now states.
+- **`incoming` root.** `path.conf` key `incoming`; `magvault init` writes
+  `<data root>/mags/.incoming`, and a missing key defaults to `<mags>/.incoming` (PLAN.md
+  "Incoming staging"). It must be on the same filesystem as `mags` (checked; a separate
+  staging dataset is refused) and is refused under `/tmp`, `/var/tmp`, `/dev/shm`. The
+  hidden `.incoming` folder is not a mag and is skipped by `reconcile --all`.
 - **rsync with `--files-from`.** Copies exactly the probed file list instead of the whole
   card directory, so junk is excluded by construction and the copy matches the hashed set.
 - **Magcard backups.** Named `.magvault/magcard.YYYYMMDD-HHMMSS.backup` (UTC, PLAN.md
@@ -82,18 +103,20 @@ consistent choice was made. Each is easy to change.
   database. If they differ the card is backed up and rewritten (unknown header keys are
   kept). Manifest differences, missing/extra/changed files are integrity errors: reported,
   logged, exit code 1, nothing rewritten. `--verify-hashes` re-hashes files.
+  `reconcile --all` also lists the folders in `mags/` (hidden ones such as `.incoming`
+  skipped): a folder with no database record is reported as INTEGRITY (exit 1) and logged
+  as ERROR. It is never adopted, moved or deleted.
 - **Camera in the database** is the profile id only; `camera_model` on the card is the
   profile's `name` at write time.
 - **Project by name.** `--project` reuses the single open project with that name, creates
   a new one if no project has that name, and refuses if the name only matches a closed
   project or matches several open ones (`--project-id` then).
-- **Interrupted ingest** (Ctrl+C, crash) leaves a folder in `incoming/` that is neither in
-  `mags/` nor in the database; the next ingest warns about it. Cleanup is manual in
-  Phase 0.
+- **Interrupted ingest**: see "Interrupts and leftovers" above. Cleanup of SIGKILL
+  leftovers is manual in Phase 0.
 
-## Not tested here
+## Tests
 
-The development machine had no `rsync`; the end-to-end test ran with
-`tests/fake-bin/rsync`, a test double that implements only the options above. Run
-`tests/e2e.sh` on Ubuntu with rsync installed (it uses the real one automatically) before
-relying on it.
+`tests/e2e.sh` uses the real `rsync` when it is installed and `tests/fake-bin/rsync` (a
+test double for the options above) otherwise. It builds the release binary. The interrupt
+tests copy one large random file so the signal lands mid-copy;
+`MAGVAULT_E2E_BIG_MB` (default 1536) sets its size. They need `setsid` and `pgrep`.

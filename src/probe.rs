@@ -4,6 +4,7 @@
 use crate::error::{Context, Result};
 use crate::profiles::{glob_match, CameraProfile};
 use crate::time;
+use crate::util::esc;
 use std::collections::HashMap;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
@@ -122,7 +123,7 @@ fn walk_dir(
         let path = e.path();
         let rel_path = path.strip_prefix(root).unwrap_or(&path);
         let Some(rel) = rel_path.to_str().map(str::to_string) else {
-            problems.push(format!("{} (name is not valid UTF-8)", rel_path.to_string_lossy()));
+            problems.push(format!("{} (name is not valid UTF-8)", esc(&rel_path.to_string_lossy())));
             continue;
         };
         let name = e.file_name().to_string_lossy().into_owned();
@@ -131,12 +132,12 @@ fn walk_dir(
             continue;
         }
         if name.contains('|') || name.chars().any(char::is_control) {
-            problems.push(format!("{rel} (name contains '|' or a control character)"));
+            problems.push(format!("{} (name contains '|' or a control character)", esc(&rel)));
             continue;
         }
         let ft = e.file_type().ctx(format!("cannot stat {}", path.display()))?;
         if ft.is_symlink() {
-            problems.push(format!("{rel} (symbolic link)"));
+            problems.push(format!("{} (symbolic link)", esc(&rel)));
         } else if ft.is_dir() {
             walk_dir(root, &path, files, skipped, problems)?;
         } else if ft.is_file() {
@@ -144,7 +145,7 @@ fn walk_dir(
             let mtime = md.modified().map(time::system_time_secs).unwrap_or(0);
             files.push(ProbedFile { rel, abs: path, size: md.len(), mtime, role: Role::Other, clip: None });
         } else if ft.is_block_device() || ft.is_char_device() || ft.is_fifo() || ft.is_socket() {
-            problems.push(format!("{rel} (device, FIFO or socket)"));
+            problems.push(format!("{} (device, FIFO or socket)", esc(&rel)));
         }
     }
     Ok(())

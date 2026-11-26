@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # End-to-end test of Phase 0: init → ingest → magcard / MHL / DB checks → conflict
-# handling → integrity errors → failure paths.
+# handling → integrity errors → failure paths → orphan folders → escaping of control
+# characters → Ctrl+C / SIGTERM / kill -9 during the copy → concurrent ingests.
 #
 # Uses the real `rsync` when installed. Without it, tests/fake-bin/rsync (a test double
 # that copies files) is put on PATH and a notice is printed. Needs: cargo, python3,
-# ffmpeg/ffprobe (for realistic clips; plain bytes are used if ffmpeg is missing).
+# ffmpeg/ffprobe (for realistic clips; plain bytes are used if ffmpeg is missing), setsid and
+# pgrep (util-linux, procps). With the real rsync the interrupt tests copy a large random
+# file so the signal lands mid-copy: MAGVAULT_E2E_BIG_MB (default 1536) sets its size.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,8 +15,8 @@ W="$REPO/target/e2e-work"          # inside the repo, never /tmp (incoming may n
 rm -rf "$W"
 mkdir -p "$W"
 
-cargo build --offline --quiet --manifest-path "$REPO/Cargo.toml" 2>/dev/null || cargo build --quiet --manifest-path "$REPO/Cargo.toml"
-MV="$REPO/target/debug/magvault"
+cargo build --release --offline --quiet --manifest-path "$REPO/Cargo.toml" 2>/dev/null || cargo build --release --quiet --manifest-path "$REPO/Cargo.toml"
+MV="$REPO/target/release/magvault"
 
 if ! command -v rsync >/dev/null || [ "${MAGVAULT_E2E_FAKE_RSYNC:-}" = 1 ]; then
   echo "NOTICE: real rsync not used; tests/fake-bin/rsync (test double) is on PATH"
@@ -35,10 +38,13 @@ mv_() { "$MV" --config "$CFG" "$@"; }
 
 echo "== init"
 "$MV" --config "$CFG" init --root "$DATA" >/dev/null
-for d in mags incoming proxies/db bins db logs custom_encode; do [ -d "$DATA/$d" ] || fail "missing $DATA/$d"; done
+for d in mags mags/.incoming proxies/db bins db logs custom_encode; do [ -d "$DATA/$d" ] || fail "missing $DATA/$d"; done
 [ -f "$CFG/cameras/sony-a7siii.cam" ] && [ -f "$CFG/encoders/default-320p.enc" ] || fail "starter profiles"
 [ -f "$DATA/db/magvault.sqlite" ] || fail "database"
-pass "config dir, roots, starter profiles, database"
+grep -qx "incoming: $DATA/mags/.incoming" "$CFG/path.conf" || fail "init must write incoming: <mags>/.incoming"
+INC="$DATA/mags/.incoming"
+mags_entries() { ls -A "$1" | grep -vx '.incoming' || true; }   # .incoming lives in mags/ and is not a mag
+pass "config dir, roots (incoming = mags/.incoming), starter profiles, database"
 "$MV" --config "$CFG" init >/dev/null && pass "init is idempotent"
 
 echo "== build a fake card"
@@ -67,7 +73,7 @@ expect_fail "no confirmation without a terminal" "re-run with --yes" mv_ ingest 
 expect_fail "gamma not in profile" "is not offered by camera profile" mv_ ingest "$CARD" --project ACME_Campaign_2025 --gamma HLG --yes
 expect_fail "bad shoot date" "must be a real date" mv_ ingest "$CARD" --project X --shoot-date 2025-02-30 --yes
 expect_fail "source inside a Magvault root" "overlaps the Magvault root" mv_ ingest "$DATA/mags" --project X --yes
-[ -z "$(ls -A "$DATA/mags")" ] && [ -z "$(ls -A "$DATA/incoming")" ] || fail "something was written"
+[ -z "$(mags_entries "$DATA/mags")" ] && [ -z "$(ls -A "$INC")" ] || fail "something was written"
 pass "mags/ and incoming/ still empty"
 
 echo "== ingest"
@@ -75,7 +81,7 @@ mv_ ingest "$CARD" --project ACME_Campaign_2025 --notes "Second unit, stage left
 cat "$W/ingest1.out"
 FOLDER=$(awk '/^ingested /{print $2}' "$W/ingest1.out")
 python3 -I "$REPO/tests/check_ingest.py" "$DATA" "$CARD" "$FOLDER"
-[ -z "$(ls -A "$DATA/incoming")" ] || fail "incoming not empty after ingest"
+[ -z "$(ls -A "$INC")" ] || fail "incoming not empty after ingest (incl. .files/.lock)"
 pass "incoming/ empty after commit"
 grep -q "INFO   ingest    Mag $FOLDER ingested" "$DATA"/logs/*.log && pass "log line written" || fail "log line"
 
@@ -156,9 +162,115 @@ else
   echo "  (skipping injected rsync faults: real rsync in use)"
 fi
 expect_fail "closed project" "is closed" bash -c "python3 -I -c \"import sqlite3; d=sqlite3.connect('$DATA/db/magvault.sqlite'); d.execute(\\\"update projects set status='closed'\\\"); d.commit()\" && '$MV' --config '$CFG' ingest '$CARD' --project 'ACME Campaign 2025' --yes"
-[ "$(count_mags)" = "$n_before" ] && [ "$(ls "$DATA/mags")" = "$ls_before" ] && [ -z "$(ls -A "$DATA/incoming")" ] || fail "leftovers"
+[ "$(count_mags)" = "$n_before" ] && [ "$(ls "$DATA/mags")" = "$ls_before" ] && [ -z "$(ls -A "$INC")" ] || fail "leftovers"
 pass "no new mags, no leftovers in incoming/"
 grep -q "ERROR  ingest" "$DATA"/logs/*.log && pass "failures logged as ERROR" || true
+
+# ---------------------------------------------------------------------------------------
+# Second environment: orphan folders, escaping, interrupts, concurrency.
+CFG2="$W/config2"
+DATA2="$W/data2"
+INC2="$DATA2/mags/.incoming"
+"$MV" --config "$CFG2" init --root "$DATA2" >/dev/null
+m2() { "$MV" --config "$CFG2" "$@"; }
+log2() { cat "$DATA2"/logs/*.log; }
+count_mags2() { python3 -I -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]+'/db/magvault.sqlite').execute('select count(*) from mags').fetchone()[0])" "$DATA2"; }
+ING=(ingest --camera sony-a7siii --shoot-date 2026-11-26 --project "Interrupt tests" --yes)
+SMALL="$W/cards/SMALL"; mkdir -p "$SMALL/DCIM"; head -c 100000 /dev/urandom > "$SMALL/DCIM/A001_C001.mov"
+m2 "${ING[@]}" "$SMALL" >/dev/null 2>&1
+
+echo "== orphan folders in mags/"
+out=$(m2 reconcile --all) || { echo "$out"; fail "clean environment not ok"; }
+pass "reconcile --all ok; mags/.incoming is not reported"
+ORPHAN_NAME="20261126_00000000-0000-4000-8000-000000000000"
+mkdir "$DATA2/mags/$ORPHAN_NAME"
+set +e; out=$(m2 reconcile --all); rc=$?; set -e
+[ $rc = 1 ] && grep -q "^INTEGRITY $ORPHAN_NAME  folder in mags/ has no database record" <<<"$out" || { echo "$out"; fail "orphan not reported"; }
+[ -d "$DATA2/mags/$ORPHAN_NAME" ] || fail "orphan folder was touched"
+log2 | grep -q "ERROR  system    Folder in mags/ with no database record: $ORPHAN_NAME" || fail "orphan not logged"
+pass "orphan folder → INTEGRITY, exit 1, logged, left in place"
+rmdir "$DATA2/mags/$ORPHAN_NAME"
+m2 reconcile --all >/dev/null || fail "still failing after the orphan was removed"
+
+echo "== control characters are escaped on screen and in the log"
+ESC=$'\033'
+ESCCARD="$W/cards/ESC"; mkdir -p "$ESCCARD/DCIM"; head -c 1000 /dev/urandom > "$ESCCARD/DCIM/A001_C001.mov"
+touch "$ESCCARD/._${ESC}[2Jboom"
+m2 "${ING[@]}" "$ESCCARD" > "$W/esc.out" 2> "$W/esc.err"
+if grep -q "$ESC" "$W/esc.out" "$W/esc.err" "$DATA2"/logs/*.log; then fail "raw ESC byte on screen or in the log"; fi
+grep -qF '._\u{1b}[2Jboom' "$W/esc.err" || { cat "$W/esc.err"; fail "escaped junk name not shown"; }
+log2 | grep -qF '  skipped junk: ._\u{1b}[2Jboom' || fail "escaped junk name not logged"
+BAD="$W/cards/BAD"; mkdir -p "$BAD"; touch "$BAD/bad${ESC}[31mname.mov"
+set +e; m2 "${ING[@]}" "$BAD" 2> "$W/bad.err"; set -e
+if grep -q "$ESC" "$W/bad.err"; then fail "raw ESC in refusal message"; fi
+grep -qF 'bad\u{1b}[31mname.mov' "$W/bad.err" || { cat "$W/bad.err"; fail "refusal message not escaped"; }
+pass "junk name with an escape sequence shown and logged as \\u{1b}; refusal message escaped"
+
+echo "== Ctrl+C, SIGTERM and kill -9 during the copy"
+BIG="$W/cards/BIG"; mkdir -p "$BIG/DCIM"
+if [ "$(command -v rsync)" = "$REPO/tests/fake-bin/rsync" ]; then
+  head -c 2000000 /dev/urandom > "$BIG/DCIM/A001_C001.mov"
+  SLOW_LONG="FAKE_RSYNC_DELAY=60"; SLOW_SHORT="FAKE_RSYNC_DELAY=3"
+else
+  head -c "${MAGVAULT_E2E_BIG_MB:-1536}M" /dev/urandom > "$BIG/DCIM/A001_C001.mov"
+  SLOW_LONG="MAGVAULT_E2E=1"; SLOW_SHORT="MAGVAULT_E2E=1"
+fi
+start_bg() { # start_bg <env assignment> <card>: ingest in its own process group (setsid), like a terminal job
+  setsid env "$1" "$MV" --config "$CFG2" "${ING[@]}" "$2" > "$W/bg.out" 2> "$W/bg.err" &
+  BG_PID=$!
+}
+wait_rsync() { # until rsync is a running child of the ingest
+  for _ in $(seq 1 1800); do
+    pgrep -P "$BG_PID" -f rsync >/dev/null && return 0
+    kill -0 "$BG_PID" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  return 1
+}
+n0=$(count_mags2)
+
+start_bg "$SLOW_LONG" "$BIG"; wait_rsync || fail "rsync did not start"; sleep 0.5
+kill -INT -- -"$BG_PID"                       # whole process group, as Ctrl+C at a terminal does
+set +e; { wait "$BG_PID"; } 2>/dev/null; rc=$?; set -e
+[ $rc != 0 ] || fail "ingest finished before the signal; raise MAGVAULT_E2E_BIG_MB"
+grep -q "interrupted by operator (SIGINT)" "$W/bg.err" || { cat "$W/bg.err"; fail "no interrupt message"; }
+[ -z "$(ls -A "$INC2")" ] || fail "incoming not clean after Ctrl+C: $(ls -A "$INC2")"
+log2 | grep -A2 "ERROR  ingest" | grep -q "interrupted by operator (SIGINT)" || fail "Ctrl+C not logged as ERROR"
+[ "$(count_mags2)" = "$n0" ] || fail "a mag was committed"
+pass "Ctrl+C: staging, .files and .lock removed, ERROR logged, nothing committed"
+
+start_bg "$SLOW_LONG" "$BIG"; wait_rsync || fail "rsync did not start"; sleep 0.5
+kill -TERM "$BG_PID"                          # Magvault only: it must stop rsync itself
+set +e; { wait "$BG_PID"; } 2>/dev/null; rc=$?; set -e
+[ $rc != 0 ] && grep -q "interrupted by operator (SIGTERM)" "$W/bg.err" || { cat "$W/bg.err"; fail "SIGTERM not handled"; }
+log2 | grep -A2 "ERROR  ingest" | grep -q "interrupted by operator (SIGTERM)" || fail "SIGTERM not logged as ERROR"
+sleep 0.5
+pgrep -f "rsync.*$INC2" >/dev/null && fail "rsync still running after SIGTERM"
+[ -z "$(ls -A "$INC2")" ] || fail "incoming not clean after SIGTERM: $(ls -A "$INC2")"
+pass "SIGTERM to Magvault alone: rsync stopped, incoming clean, ERROR logged"
+
+start_bg "$SLOW_LONG" "$BIG"; wait_rsync || fail "rsync did not start"; sleep 0.5
+kill -KILL -- -"$BG_PID"                      # crash / power loss: nothing can clean up
+set +e; { wait "$BG_PID"; } 2>/dev/null; set -e
+LEFT=$(ls "$INC2")
+[ -n "$LEFT" ] && [ -e "$INC2/.$LEFT.files" ] && [ -e "$INC2/.$LEFT.lock" ] || fail "expected a leftover folder, .files and .lock"
+m2 "${ING[@]}" "$SMALL" > /dev/null 2> "$W/after.err"
+grep -q "from an interrupted ingest" "$W/after.err" && grep -qF "$INC2/$LEFT/ + $INC2/.$LEFT.files" "$W/after.err" || { cat "$W/after.err"; fail "no warning on screen"; }
+log2 | grep -A1 "WARN   ingest" | grep -qF "$INC2/$LEFT/ + $INC2/.$LEFT.files" || fail "WARN not logged with folder and list"
+[ -d "$INC2/$LEFT" ] || fail "leftover must not be cleaned automatically"
+pass "kill -9: next ingest warns on screen and logs WARN naming $LEFT and its .files list; left for manual cleanup"
+rm -rf "${INC2:?}/$LEFT" "$INC2/.$LEFT.files" "$INC2/.$LEFT.lock"
+
+echo "== two ingests at the same time: no false warning"
+warns_before=$(log2 | grep -c "WARN   ingest" || true)
+start_bg "$SLOW_SHORT" "$BIG"; wait_rsync || fail "rsync did not start"
+m2 "${ING[@]}" "$SMALL" > /dev/null 2> "$W/concurrent.err"
+set +e; { wait "$BG_PID"; } 2>/dev/null; rc=$?; set -e
+[ $rc = 0 ] || { cat "$W/bg.err"; fail "background ingest failed"; }
+if grep -q "interrupted ingest" "$W/concurrent.err"; then fail "live ingest reported as interrupted"; fi
+[ "$(log2 | grep -c "WARN   ingest" || true)" = "$warns_before" ] || fail "WARN logged for a live ingest"
+[ -z "$(ls -A "$INC2")" ] || fail "incoming not clean after both ingests"
+pass "the running ingest's staging folder is not reported; both ingests committed"
 
 echo
 echo "ALL E2E CHECKS PASSED"

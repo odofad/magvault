@@ -244,8 +244,9 @@ pub struct FileHashes {
 const BUF: usize = 4 * 1024 * 1024;
 
 /// Read a file once, computing SHA-256 and (optionally) SHA-512 for C4.
-/// `progress` is called with the number of bytes read since the last call.
-pub fn hash_file(path: &Path, with_c4: bool, progress: &mut dyn FnMut(u64)) -> std::io::Result<FileHashes> {
+/// `progress` is called with the number of bytes read since the last call; returning
+/// `false` stops the read with an `Interrupted` error (used for Ctrl+C / SIGTERM).
+pub fn hash_file(path: &Path, with_c4: bool, progress: &mut dyn FnMut(u64) -> bool) -> std::io::Result<FileHashes> {
     let mut f = File::open(path)?;
     let mut buf = vec![0u8; BUF];
     let mut s256 = Sha256::new();
@@ -263,7 +264,9 @@ pub fn hash_file(path: &Path, with_c4: bool, progress: &mut dyn FnMut(u64)) -> s
             s.update(&buf[..n]);
         }
         bytes += n as u64;
-        progress(n as u64);
+        if !progress(n as u64) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "stopped"));
+        }
     }
     Ok(FileHashes {
         sha256: hex(&s256.finalize()),
@@ -324,7 +327,11 @@ mod tests {
         let data: Vec<u8> = (0..9_437_187u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
         std::fs::write(&path, &data).unwrap();
         let mut seen = 0;
-        let h = hash_file(&path, true, &mut |n| seen += n).unwrap();
+        let h = hash_file(&path, true, &mut |n| {
+            seen += n;
+            true
+        })
+        .unwrap();
         assert_eq!(seen, data.len() as u64);
         let tool = |name: &str| {
             std::process::Command::new(name).arg(&path).output().ok().filter(|o| o.status.success()).map(|o| {

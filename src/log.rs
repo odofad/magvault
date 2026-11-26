@@ -1,6 +1,8 @@
 //! Daily log files `logs/YYYY-MM-DD.log` (UTC day), one entry per line:
 //! `2026-11-22T21:15:03Z  INFO   ingest    message` (PLAN.md "Logs module").
 //! Context lines start with two spaces and are written in the same write(2) as their entry.
+//! Every control character in a message or context line is escaped (`\u{1b}`, `\n`), so a
+//! card file name cannot inject lines or terminal sequences (PLAN.md Threat model).
 
 use crate::time;
 use std::fs::OpenOptions;
@@ -35,7 +37,7 @@ impl Log {
 
     pub fn write(&self, level: Level, module: &str, message: &str, context: &[String]) {
         let now = time::now_secs();
-        let one_line = |s: &str| s.replace(['\n', '\r'], " ");
+        let one_line = |s: &str| crate::util::esc(s);
         let mut entry = format!("{}  {:<5}  {:<8}  {}\n", time::iso_utc(now), level.as_str(), module, one_line(message));
         for c in context {
             entry.push_str("  ");

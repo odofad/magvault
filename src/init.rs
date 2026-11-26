@@ -25,7 +25,7 @@ fn path_conf(root: &Path) -> String {
          # All roots used by Magvault. Relative paths resolve against this config directory.\n\
          mags: {}\n\
          # Ingest copies land in `incoming` and are renamed into `mags` once verified.\n\
-         # It must be on the same filesystem as `mags`. Never /tmp.\n\
+         # It lives inside the mags dataset (same filesystem, atomic rename). Never /tmp.\n\
          incoming: {}\n\
          proxies: {}\n\
          custom_encode: {}\n\
@@ -37,7 +37,7 @@ fn path_conf(root: &Path) -> String {
          telemetry_live: /dev/shm/magvault-telemetry.json\n\
          telemetry_disk: {}\n",
         r("mags"),
-        r("incoming"),
+        r("mags/.incoming"),
         r("proxies"),
         r("custom_encode"),
         r("bins"),

@@ -13,23 +13,31 @@
 //! 7. One database transaction: project (if new), mag, clips, files, 320p encoder job.
 //!    The folder is renamed into `mags/` inside that transaction and the transaction is
 //!    committed only after the rename succeeded.
+//!
+//! From the confirmation on, every failure (including Ctrl+C / SIGTERM) removes the staging
+//! folder, its `.files` list and its `.lock` file and is logged as ERROR. The `.lock` file is
+//! held (flock) for the whole ingest so that a second ingest can tell a live staging folder
+//! from one left by a killed ingest.
 
 use crate::catalog::{card_from_record, MagRecord};
 use crate::config::{self, Config};
 use crate::db::{self, Db, Value};
 use crate::error::{Context, Error, Result};
 use crate::hash;
-use crate::log::Log;
+use crate::interrupt;
+use crate::log::{Level, Log};
 use crate::magcard::{self, ManifestRow};
 use crate::mhl;
 use crate::probe::{self, Probe, Role};
 use crate::profiles::{self, CameraProfile, EncoderProfile};
 use crate::textfile::{atomic_write, check_card_field, sync_dir};
 use crate::time;
-use crate::util::{self, human, Progress};
+use crate::util::{self, esc, human, Progress};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 #[derive(Debug, Default)]
 pub struct Args {
@@ -92,7 +100,7 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
     for root in cfg.paths.data_roots() {
         if let Ok(r) = std::fs::canonicalize(root) {
             if src.starts_with(&r) || r.starts_with(&src) {
-                crate::bail!("source {} overlaps the Magvault root {}; ingest from a card or a separate folder", src.display(), r.display());
+                crate::bail!("source {} overlaps the Magvault root {}; ingest from a card or a separate folder", esc(&src.display().to_string()), r.display());
             }
         }
     }
@@ -105,7 +113,7 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
             mhl::DIR
         );
     }
-    warn_stale_incoming(&cfg.paths.incoming);
+    warn_stale_incoming(&cfg.paths.incoming, &log);
 
     // ---- profiles -----------------------------------------------------------------
     let cams = profiles::load_cameras(&cfg.paths.cameras);
@@ -120,7 +128,8 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
     let proxy_profile = resolve_320p_profile(cfg, &encs.profiles)?;
 
     // ---- probe --------------------------------------------------------------------
-    eprintln!("probing {} …", src.display());
+    let src_shown = esc(&src.display().to_string());
+    eprintln!("probing {src_shown} …");
     let use_ffprobe = probe::ffprobe_available();
     if !use_ffprobe {
         eprintln!("warning: ffprobe not found; media details (duration, fps, size, audio) will be empty");
@@ -131,7 +140,7 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
     }
     for c in &probe.clips {
         if let Some(e) = &c.info.probe_error {
-            eprintln!("warning: ffprobe could not read {}: {e}", probe.files[c.file].rel);
+            eprintln!("warning: ffprobe could not read {}: {}", esc(&probe.files[c.file].rel), esc(e));
         }
     }
 
@@ -167,7 +176,7 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
     let source_label = src.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     check_card_field("source folder name", &source_label)?;
     eprintln!();
-    eprintln!("  source      {}", src.display());
+    eprintln!("  source      {src_shown}");
     eprintln!(
         "  files       {} ({} clips, {} sidecars, {} other) · {}",
         probe.files.len(),
@@ -176,8 +185,9 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
         probe.files.len() - media_count - sidecars,
         human(probe.total_bytes)
     );
-    if !probe.skipped.is_empty() {
-        eprintln!("  skipped     {} junk item(s): {}", probe.skipped.len(), probe.skipped.join(", "));
+    let skipped: Vec<String> = probe.skipped.iter().map(|s| esc(s)).collect();
+    if !skipped.is_empty() {
+        eprintln!("  skipped     {} junk item(s): {}", skipped.len(), skipped.join(", "));
     }
     let guessed = |given: bool| if given { "" } else { "  (guessed)" };
     eprintln!("  camera      {} [{}]{}", cam.name, cam.id, guessed(a.camera.is_some()));
@@ -199,19 +209,100 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
         crate::bail!("cancelled; nothing was written");
     }
 
-    // ---- hash at ingest (first read of the card) -----------------------------------------
+    // ---- after confirmation: every failure is cleaned up and logged as ERROR ------------
+    interrupt::install();
+    let mut staged: Option<Staged> = None;
+    let result = (|| -> Result<String> {
+        let hashes = hash_source(&probe)?;
+        check_space(cfg, &probe)?;
+        interrupt::check()?;
+        let mag_uuid = util::uuid_v4()?;
+        let folder = format!("{}_{}", shoot_date.replace('-', ""), mag_uuid);
+        if cfg.paths.mags.join(&folder).exists() {
+            crate::bail!("{folder} already exists in mags/ (UUID collision?); nothing was written");
+        }
+        let st = staged.insert(Staged::create(&cfg.paths.incoming, &folder)?);
+        let ctx = Commit {
+            cfg,
+            db: &db,
+            probe: &probe,
+            hashes: &hashes,
+            cam,
+            proxy_profile,
+            project: &project,
+            mag_uuid: &mag_uuid,
+            folder: &folder,
+            staging: &st.dir,
+            final_dir: &cfg.paths.mags.join(&folder),
+            list_file: &st.list,
+            shoot_date: &shoot_date,
+            file_format: &file_format,
+            gamma: &gamma,
+            gamut: &gamut,
+            notes: &notes,
+            source_label: &source_label,
+        };
+        ctx.run()?;
+        Ok(folder)
+    })();
+    if let Some(st) = staged {
+        st.finish(result.is_ok());
+    }
+    match result {
+        Ok(folder) => {
+            let msg = format!(
+                "Mag {folder} ingested ({}) · {} files, {} clips · project {}",
+                human(probe.total_bytes),
+                probe.files.len(),
+                media_count,
+                project.name()
+            );
+            let context: Vec<String> =
+                if probe.skipped.is_empty() { Vec::new() } else { vec![format!("skipped junk: {}", probe.skipped.join(", "))] };
+            log.write(Level::Info, "ingest", &msg, &context);
+            if media_count > 0 {
+                log.info("encoder", &format!("320p proxy job queued for {folder} ({} clips, profile {})", media_count, proxy_profile.id));
+            }
+            if interrupt::requested() {
+                eprintln!("note: a stop signal arrived while the mag was being committed; the ingest completed");
+            }
+            let final_dir = cfg.paths.mags.join(&folder);
+            Ok(Outcome { folder, mag_dir: final_dir, files: probe.files.len(), clips: media_count, bytes: probe.total_bytes })
+        }
+        Err(e) => {
+            let context: Vec<String> = e.0.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+            log.error("ingest", &format!("Ingest of {} failed; nothing committed", src.display()), &context);
+            Err(e)
+        }
+    }
+}
+
+/// First read of the card: SHA-256 (and C4) of every file (PLAN.md "Hashing").
+fn hash_source(probe: &Probe) -> Result<Vec<Hashed>> {
     let mut prog = Progress::new("hashing ", probe.total_bytes);
     let mut hashes: Vec<Hashed> = Vec::with_capacity(probe.files.len());
     for f in &probe.files {
-        let h = hash::hash_file(&f.abs, true, &mut |n| prog.add(n)).ctx(format!("cannot read {}", f.rel))?;
+        let h = hash::hash_file(&f.abs, true, &mut |n| {
+            prog.add(n);
+            !interrupt::requested()
+        });
+        interrupt::check()?;
+        let h = h.ctx(format!("cannot read {}", esc(&f.rel)))?;
         if h.bytes != f.size {
-            crate::bail!("{} changed size while it was being read ({} → {} bytes); is the card still being written?", f.rel, f.size, h.bytes);
+            crate::bail!(
+                "integrity error: {} changed size while it was being read ({} → {} bytes); is the card still being written?",
+                esc(&f.rel),
+                f.size,
+                h.bytes
+            );
         }
         hashes.push(Hashed { sha256: h.sha256, c4: h.c4.unwrap_or_default() });
     }
     prog.finish();
+    Ok(hashes)
+}
 
-    // ---- free space -------------------------------------------------------------------
+fn check_space(cfg: &Config, probe: &Probe) -> Result<()> {
     let need = probe.total_bytes + probe.total_bytes / 100 + (1 << 30);
     let avail = util::free_bytes(&cfg.paths.incoming)?;
     if avail < need {
@@ -223,62 +314,45 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
             human(avail)
         );
     }
+    Ok(())
+}
 
-    // ---- copy, verify, write cards, commit --------------------------------------------------
-    let mag_uuid = util::uuid_v4()?;
-    let folder = format!("{}_{}", shoot_date.replace('-', ""), mag_uuid);
-    let staging = cfg.paths.incoming.join(&folder);
-    let final_dir = cfg.paths.mags.join(&folder);
-    let list_file = cfg.paths.incoming.join(format!(".{folder}.files"));
-    if staging.exists() || final_dir.exists() {
-        crate::bail!("{folder} already exists (UUID collision?); nothing was written");
+/// One ingest's footprint in `incoming/`: the staging folder, its rsync list and its lock.
+/// The lock file is created and flock-ed before the folder exists and held until the end,
+/// so `warn_stale_incoming` never reports a folder whose ingest is still running.
+struct Staged {
+    dir: PathBuf,
+    list: PathBuf,
+    lock_path: PathBuf,
+    lock: File,
+}
+
+impl Staged {
+    fn create(incoming: &Path, folder: &str) -> Result<Staged> {
+        let dir = incoming.join(folder);
+        let list = incoming.join(format!(".{folder}.files"));
+        let lock_path = incoming.join(format!(".{folder}.lock"));
+        if dir.exists() || list.exists() || lock_path.exists() {
+            crate::bail!("{folder} already exists in incoming/ (UUID collision?); nothing was written");
+        }
+        let lock = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+            .ctx(format!("cannot create {}", lock_path.display()))?;
+        lock.lock().ctx(format!("cannot lock {}", lock_path.display()))?;
+        Ok(Staged { dir, list, lock_path, lock })
     }
 
-    let ctx = Commit {
-        cfg,
-        db: &db,
-        probe: &probe,
-        hashes: &hashes,
-        cam,
-        proxy_profile,
-        project: &project,
-        mag_uuid: &mag_uuid,
-        folder: &folder,
-        staging: &staging,
-        final_dir: &final_dir,
-        list_file: &list_file,
-        shoot_date: &shoot_date,
-        file_format: &file_format,
-        gamma: &gamma,
-        gamut: &gamut,
-        notes: &notes,
-        source_label: &source_label,
-    };
-    let result = ctx.run();
-    let _ = std::fs::remove_file(&list_file);
-    match result {
-        Ok(()) => {
-            let msg = format!(
-                "Mag {folder} ingested ({}) · {} files, {} clips · project {}",
-                human(probe.total_bytes),
-                probe.files.len(),
-                media_count,
-                project.name()
-            );
-            log.info("ingest", &msg);
-            if media_count > 0 {
-                log.info("encoder", &format!("320p proxy job queued for {folder} ({} clips, profile {})", media_count, proxy_profile.id));
-            }
-            Ok(Outcome { folder, mag_dir: final_dir, files: probe.files.len(), clips: media_count, bytes: probe.total_bytes })
+    /// Remove what is left in `incoming/`. On success the folder has already been renamed
+    /// into `mags/`; on failure it is deleted. The lock file goes last.
+    fn finish(self, committed: bool) {
+        if !committed && self.dir.exists() {
+            let _ = std::fs::remove_dir_all(&self.dir);
         }
-        Err(e) => {
-            if staging.exists() {
-                let _ = std::fs::remove_dir_all(&staging);
-            }
-            let context: Vec<String> = e.0.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
-            log.error("ingest", &format!("Ingest of {} failed; nothing committed", src.display()), &context);
-            Err(e)
-        }
+        let _ = std::fs::remove_file(&self.list);
+        let _ = std::fs::remove_file(&self.lock_path);
+        let _ = self.lock.unlock();
     }
 }
 
@@ -307,10 +381,15 @@ impl Commit<'_> {
     fn run(&self) -> Result<()> {
         std::fs::create_dir(self.staging).ctx(format!("cannot create {}", self.staging.display()))?;
         self.rsync()?;
+        interrupt::check()?;
         self.verify()?;
+        interrupt::check()?;
         let now = time::now_secs();
         let now_iso = time::iso_utc(now);
         self.write_cards(now, &now_iso)?;
+        // Last point where a stop signal is honoured. From here the rename into mags/ and the
+        // database commit run to the end; a signal arriving now is held off (PLAN.md Threat model).
+        interrupt::check()?;
         self.commit_db(&now_iso)
     }
 
@@ -326,7 +405,7 @@ impl Commit<'_> {
         let mut dst_arg = self.staging.as_os_str().to_owned();
         dst_arg.push("/");
         eprintln!("copying with rsync → {}", self.staging.display());
-        let status = Command::new("rsync")
+        let mut child = Command::new("rsync")
             .arg("-t")
             .arg("--no-links")
             .arg("--no-devices")
@@ -338,8 +417,21 @@ impl Commit<'_> {
             .arg(&src_arg)
             .arg(&dst_arg)
             .env("LC_ALL", "C")
-            .status()
+            .spawn()
             .ctx("cannot start rsync")?;
+        // Ctrl+C reaches rsync directly (same process group). A SIGTERM sent to Magvault
+        // alone does not, so rsync is stopped here when a signal has been recorded.
+        let status = loop {
+            if let Some(st) = child.try_wait().ctx("waiting for rsync")? {
+                break st;
+            }
+            if interrupt::requested() {
+                interrupt::stop_child(&mut child);
+                return Err(interrupt::error());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        interrupt::check()?;
         if !status.success() {
             crate::bail!("rsync failed ({}); nothing committed", status.code().map_or("killed".into(), |c| format!("exit {c}")));
         }
@@ -367,7 +459,12 @@ impl Commit<'_> {
                 problems.push(format!("size differs: {} ({} vs {} bytes)", f.rel, f.size, want.size));
                 continue;
             }
-            let h = hash::hash_file(&f.abs, false, &mut |n| prog.add(n)).ctx(format!("cannot read copied {}", f.rel))?;
+            let h = hash::hash_file(&f.abs, false, &mut |n| {
+                prog.add(n);
+                !interrupt::requested()
+            });
+            interrupt::check()?;
+            let h = h.ctx(format!("cannot read copied {}", esc(&f.rel)))?;
             if h.sha256 != self.hashes[i].sha256 {
                 problems.push(format!("SHA-256 mismatch: {} (card {}, copy {})", f.rel, self.hashes[i].sha256, h.sha256));
             }
@@ -546,21 +643,50 @@ fn require_tool(name: &str, args: &[&str], why: &str) -> Result<()> {
     }
 }
 
-fn warn_stale_incoming(incoming: &Path) {
+/// Report staging folders left by an ingest that was killed (SIGKILL, power loss): a folder
+/// in `incoming/` whose `.lock` is not held by a running ingest. Printed and logged as WARN;
+/// cleanup is manual. Folders of ingests still running are skipped.
+fn warn_stale_incoming(incoming: &Path, log: &Log) {
     let Ok(rd) = std::fs::read_dir(incoming) else { return };
-    let stale: Vec<String> = rd
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| !n.starts_with('.'))
-        .collect();
-    if !stale.is_empty() {
-        eprintln!(
-            "warning: {} holds {} folder(s) from an interrupted ingest (not in mags/, not in the database): {}",
-            incoming.display(),
-            stale.len(),
-            stale.join(", ")
-        );
+    let mut entries: Vec<_> = rd.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    let mut items = Vec::new();
+    for e in entries {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let lock = incoming.join(format!(".{name}.lock"));
+        let live = match File::open(&lock) {
+            Ok(f) => matches!(f.try_lock(), Err(TryLockError::WouldBlock)),
+            Err(_) => false,
+        };
+        // Re-check: a live ingest may have just finished and moved its folder away.
+        if live || !e.path().is_dir() {
+            continue;
+        }
+        let mut item = format!("{}/", incoming.join(&name).display());
+        for extra in [format!(".{name}.files"), format!(".{name}.lock")] {
+            let p = incoming.join(&extra);
+            if p.exists() {
+                item.push_str(&format!(" + {}", p.display()));
+            }
+        }
+        items.push(item);
     }
+    if items.is_empty() {
+        return;
+    }
+    let msg = format!(
+        "{} holds {} folder(s) from an interrupted ingest (not in mags/, not in the database; remove by hand)",
+        incoming.display(),
+        items.len()
+    );
+    eprintln!("warning: {}", esc(&msg));
+    for i in &items {
+        eprintln!("  {}", esc(i));
+    }
+    log.write(Level::Warn, "ingest", &msg, &items);
 }
 
 fn resolve_320p_profile<'a>(cfg: &Config, encs: &'a [EncoderProfile]) -> Result<&'a EncoderProfile> {
