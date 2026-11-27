@@ -973,6 +973,27 @@ The server dashboard must show:
 
 
 
+
+## Client ↔ server status
+
+SSH reachable is not the same as the server committing.
+
+- The client treats the server as ready only if `serve` answers a status/ping that means it is alive and accepting commits.
+- If SSH works but `serve` does not answer, status is **server up, committer down**. Do not show “reachable” alone.
+- Ingest and sync wait with that warning. They time out with a clear message. They do not spin forever.
+- The dashboard uses the same check.
+
+### Client issues on the server log
+
+Operational client problems are also written to the server daily log, for debug when nobody is on the field machine.
+
+- Sent over the existing SSH gate (a `log` verb, or with status). No new API.
+- Server line includes the client label, for example: `WARN client rafiki  server committer down; ingest waiting`
+- Only operational events: connect failure, serve down, timeout, ingest/sync error, sudo cancelled.
+- Not keypresses. Not secrets (passwords, key material).
+- Rate-limited so a stuck client cannot flood the log.
+- The client still writes its own local log.
+
 ## CLI and scripting
 
 Magvault is terminal-first. It is not an API. There is no HTTP service and no client library.
