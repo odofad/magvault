@@ -114,7 +114,7 @@ Single file `db/magvault.sqlite`. Files on disk remain the source of truth for m
 - season_or_year (optional)
 - notes
 - status (open / closed) — open projects appear in ingest; closed projects are hidden from ingest and only visible in the library
-- requirements (optional text) — free text set at project setup, e.g. "50p 4K", "30p HD", "XAVC S 4K". Shown to the operator at ingest. Not a hard limit.
+- requirements (optional) — fixed values chosen at project creation from lists (resolution, frame rate, format). No free text. Shown at ingest. Not a hard limit.
 - created_at, updated_at
 
 ### mags
@@ -231,17 +231,24 @@ A mag can be soft-locked once it has been used on a production. Soft lock does n
 
 ## Project requirements warning
 
-Projects can carry a requirements note (e.g. "50p 4K", "30p HD"). It is set when the project is created or edited.
+Requirements are set at project creation. Fixed values only, chosen from lists. No free text, so no typos.
+
+Lists (locked for now):
+- Resolution: 4K, HD, SD
+- Frame rate: 24, 25, 30, 50, 60
+- Format: XAVC S 4K, XAVC S HD, AVCHD, ProRes, ProRes RAW
+
+A project can set any combination (e.g. 4K + 50 + XAVC S 4K). All are optional. Empty means no check.
 
 At ingest, after the card is probed and the project is selected:
 
-- Magvault compares the detected format, resolution and frame rate against the project's requirements text.
-- If they do not match, it shows a warning: "Camera footage does not meet project requirements."
+- Magvault compares the detected resolution, frame rate and format against the project's fixed values.
+- If any set value does not match, it shows: "Camera footage does not meet project requirements."
 - The warning is not a hard stop. The operator can still confirm and ingest.
-- The mismatch is logged to the project log (and the mag log) so the producer can see it later.
+- The mismatch is logged to the project log (and the mag) so the producer sees it later.
 - If the project has no requirements set, no check is done.
 
-The comparison is best-effort (keyword match on format / resolution / fps). It does not block. It reports.
+Project creation must offer these lists. Editing later is allowed, but the values stay from the same lists.
 
 ## Project open / closed rule
 
