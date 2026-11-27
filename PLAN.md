@@ -114,6 +114,7 @@ Single file `db/magvault.sqlite`. Files on disk remain the source of truth for m
 - season_or_year (optional)
 - notes
 - status (open / closed) — open projects appear in ingest; closed projects are hidden from ingest and only visible in the library
+- requirements (optional text) — free text set at project setup, e.g. "50p 4K", "30p HD", "XAVC S 4K". Shown to the operator at ingest. Not a hard limit.
 - created_at, updated_at
 
 ### mags
@@ -226,6 +227,21 @@ A mag can be soft-locked once it has been used on a production. Soft lock does n
 - Files are never made immutable by the soft lock.
 - ZFS or filesystem permissions are unchanged.
 - It is a workflow warning, not a security boundary.
+
+
+## Project requirements warning
+
+Projects can carry a requirements note (e.g. "50p 4K", "30p HD"). It is set when the project is created or edited.
+
+At ingest, after the card is probed and the project is selected:
+
+- Magvault compares the detected format, resolution and frame rate against the project's requirements text.
+- If they do not match, it shows a warning: "Camera footage does not meet project requirements."
+- The warning is not a hard stop. The operator can still confirm and ingest.
+- The mismatch is logged to the project log (and the mag log) so the producer can see it later.
+- If the project has no requirements set, no check is done.
+
+The comparison is best-effort (keyword match on format / resolution / fps). It does not block. It reports.
 
 ## Project open / closed rule
 
