@@ -476,7 +476,9 @@ Magvault has no internal user database. Access is the system user plus SSH keys.
 **Admin key** (optional)
 - Most clients use a normal key. They cannot create projects.
 - A key can be marked `admin: yes` in the Key module.
-- An admin key can create a project from the client (fixed requirement lists). The Job card stays read-only for normal keys.
+- This is not sudo. It does not grant ZFS, Prepare, or any root helper rights.
+- It only allows production actions from the client: create a project, set its requirements from the fixed lists.
+- The Job card stays read-only for normal keys.
 - The gate checks the key label. Creating a project is logged with that label.
 - Server admin sets or clears the flag. Normal keys stay the default.
 
