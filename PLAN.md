@@ -229,6 +229,17 @@ A mag can be soft-locked once it has been used on a production. Soft lock does n
 - It is a workflow warning, not a security boundary.
 
 
+
+### Project requirements on the client
+
+The client dashboard has a page that shows the requirements of open projects.
+
+- Operator selects a project.
+- The page shows the fixed values: frame rate, resolution, GOP.
+- Used when setting up gear, before cards are loaded.
+- Read-only on the client. Requirements are set at project creation on the server.
+- If a project has no requirements, the page says so.
+
 ## Project requirements warning
 
 Requirements are set at project creation. Fixed values only, chosen from lists. No free text, so no typos.
