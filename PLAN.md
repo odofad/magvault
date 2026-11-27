@@ -363,6 +363,19 @@ Logs live in files under the `logs/` path (from path.conf). They are never writt
 - Detail pane shows the full selected line plus any multi-line context that follows it.
 - Optional follow / tail mode (`f`). The list stays newest-first. Follow keeps the selection on the newest entry (top of the list) and scrolls as new lines arrive.
 
+
+### Debug logging
+
+Extra operational detail for test benches and fault finding. Off by default.
+
+- Config: `debug: yes` in `magvault.conf` (or `debug: no`).
+- CLI override: `--verbose` / `--debug` for one run.
+- Writes to the same daily log files under `logs/` that the Logs viewer reads. Level `DEBUG`.
+- Filterable in the Logs viewer like INFO / WARN / ERROR.
+- Covers: gate verbs, serve accept/reject, rsync start/end, hash verify, incoming rename, helper calls (never the sudo password).
+- No secrets. No key material.
+- Client debug lines are also sent to the server log when the client-issues path is up (same rate limit).
+
 ### Retention
 - Setting in `magvault.conf`: `log_retention_days`.
 - Default: 30.
