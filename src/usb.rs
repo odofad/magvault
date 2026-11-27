@@ -19,7 +19,7 @@ pub fn status(scan_roots: &[PathBuf]) -> Result<()> {
     let drives = fieldset::drives(scan_roots);
     let sets = fieldset::sets(&drives);
     if sets.is_empty() {
-        println!("no field backup set mounted");
+        crate::out!("no field backup set mounted");
     }
     for s in &sets {
         let actions = match (&s.status, s.pending().len(), s.mags.len()) {
@@ -30,14 +30,14 @@ pub fn status(scan_roots: &[PathBuf]) -> Result<()> {
             }
             _ => "mount both drives of the set".to_string(),
         };
-        println!("{}", s.line());
-        println!("    set id {}  ·  {actions}", s.set_id);
+        crate::out!("{}", s.line());
+        crate::out!("    set id {}  ·  {actions}", s.set_id);
         for (role, root) in [("master", &s.master), ("slave", &s.slave)] {
             if let Some(r) = root {
                 let free = util::free_bytes(r)
                     .map(human)
                     .unwrap_or_else(|_| "?".into());
-                println!(
+                crate::out!(
                     "    {role:<6} {}  ({free} free)",
                     esc(&r.display().to_string())
                 );
@@ -49,9 +49,9 @@ pub fn status(scan_roots: &[PathBuf]) -> Result<()> {
     if scan_roots.is_empty() {
         for c in fieldset::candidates().unwrap_or_default() {
             match &c.disk {
-                Ok(d) if d.backup.is_none() => println!("USB drive {}  ·  not valid  ·  [usb prepare]", d.line()),
+                Ok(d) if d.backup.is_none() => crate::out!("USB drive {}  ·  not valid  ·  [usb prepare]", d.line()),
                 Ok(_) => {}
-                Err(why) => println!("USB drive {why}"),
+                Err(why) => crate::out!("USB drive {why}"),
             }
         }
     } else {
@@ -64,7 +64,7 @@ pub fn status(scan_roots: &[PathBuf]) -> Result<()> {
                 Err(e) => format!("not valid ({})", esc(e)),
                 _ => "not valid".into(),
             };
-            println!(
+            crate::out!(
                 "USB drive {}  ·  {why}  ·  [usb prepare]",
                 esc(&d.mount.display().to_string())
             );
@@ -96,9 +96,9 @@ fn pick_disk(disks: &[Disk], exclude: Option<&str>, what: &str) -> Result<Option
     if list.is_empty() {
         crate::bail!("no removable drive found");
     }
-    eprintln!("  Mounted drives");
+    crate::say!("  Mounted drives");
     for (i, d) in list.iter().enumerate() {
-        eprintln!("  {:>2}  {}", i + 1, d.line());
+        crate::say!("  {:>2}  {}", i + 1, d.line());
     }
     let a = ask(&format!(
         "  Pick the {what} [number; Enter or Esc cancels]: "
@@ -137,16 +137,16 @@ pub fn prepare_master(cc: &ClientConfig, disk: &Disk, label: &str, yes: bool) ->
     fieldset::prepare_allowed(disk.backup.as_ref())?;
     let blocks = fieldset::master_blocks(disk.size)?;
     let set_size = blocks * fieldset::BLOCK;
-    eprintln!();
-    eprintln!("  {SMALLER_FIRST}");
-    eprintln!("  Master  {} · {}", disk.path, human(disk.size));
-    eprintln!("  Set size {}", human(set_size));
-    eprintln!(
+    crate::say!();
+    crate::say!("  {SMALLER_FIRST}");
+    crate::say!("  Master  {} · {}", disk.path, human(disk.size));
+    crate::say!("  Set size {}", human(set_size));
+    crate::say!(
         "  ALL DATA ON {} WILL BE DESTROYED. Then: format ext4, write {} (master).",
         disk.path,
         fieldset::FILE
     );
-    eprintln!("  Nothing is written until the sudo password is accepted.");
+    crate::say!("  Nothing is written until the sudo password is accepted.");
     if !yes && !util::confirm("  Confirm size and prepare the master?")? {
         crate::bail!("cancelled; nothing was written");
     }
@@ -175,7 +175,7 @@ pub fn prepare_master(cc: &ClientConfig, disk: &Disk, label: &str, yes: bool) ->
             human(set_size)
         ),
     );
-    eprintln!(
+    crate::say!(
         "  master ready: {label} at {} (set size {})",
         root.display(),
         human(set_size)
@@ -208,25 +208,25 @@ pub fn prepare_slave(
     }
     fieldset::prepare_allowed(disk.backup.as_ref())?;
     let (blocks, unused) = fieldset::slave_plan(master.set_size, disk.size)?;
-    eprintln!();
-    eprintln!(
+    crate::say!();
+    crate::say!(
         "  The slave must be the same size or larger than the master ({}).",
         human(master.set_size)
     );
-    eprintln!("  Slave  {} · {}", disk.path, human(disk.size));
+    crate::say!("  Slave  {} · {}", disk.path, human(disk.size));
     if unused > 0 {
-        eprintln!(
+        crate::say!(
             "  Will use {} to match master. Rest unused.",
             human(master.set_size)
         );
     }
-    eprintln!(
+    crate::say!(
         "  ALL DATA ON {} WILL BE DESTROYED. Then: format ext4 limited to {}, write {} (slave).",
         disk.path,
         human(master.set_size),
         fieldset::FILE
     );
-    eprintln!("  Nothing is written until the sudo password is accepted.");
+    crate::say!("  Nothing is written until the sudo password is accepted.");
     if !yes && !util::confirm("  Confirm and prepare the slave?")? {
         crate::bail!("cancelled; nothing was written to the slave");
     }
@@ -255,7 +255,7 @@ pub fn prepare_slave(
             human(master.set_size)
         ),
     );
-    eprintln!(
+    crate::say!(
         "  slave ready: set {} is complete (master + slave, {})",
         master.label,
         human(master.set_size)
@@ -298,16 +298,16 @@ pub fn prepare_slave_cmd(
 /// The whole popup: warning, pick master, confirm, sudo; then pick slave (smaller refused),
 /// confirm, sudo. Enter at a prompt cancels.
 pub fn prepare_interactive(cc: &ClientConfig, scan_roots: &[PathBuf]) -> Result<()> {
-    eprintln!("Prepare a field backup set · step 1 of 2 · master");
-    eprintln!("  {SMALLER_FIRST}");
-    eprintln!("  Pick the master first. Its size becomes the set size.");
+    crate::say!("Prepare a field backup set · step 1 of 2 · master");
+    crate::say!("  {SMALLER_FIRST}");
+    crate::say!("  Pick the master first. Its size becomes the set size.");
     let disks = fieldset::candidate_disks()?;
     let Some(master_disk) = pick_disk(&disks, None, "master")? else {
-        eprintln!("cancelled; nothing was written");
+        crate::say!("cancelled; nothing was written");
         return Ok(());
     };
     let Some(label) = ask("  Set label [FIELD-A; Esc cancels]: ")? else {
-        eprintln!("cancelled; nothing was written");
+        crate::say!("cancelled; nothing was written");
         return Ok(());
     };
     let label = if label.is_empty() {
@@ -317,17 +317,17 @@ pub fn prepare_interactive(cc: &ClientConfig, scan_roots: &[PathBuf]) -> Result<
     };
     prepare_master(cc, &master_disk, &label, false)?;
     loop {
-        eprintln!();
-        eprintln!("Prepare a field backup set · step 2 of 2 · slave");
+        crate::say!();
+        crate::say!("Prepare a field backup set · step 2 of 2 · slave");
         let disks = fieldset::candidate_disks()?;
         let Some(slave_disk) = pick_disk(&disks, Some(&master_disk.path), "slave")? else {
-            eprintln!("cancelled; the master is ready, the set has no slave yet (`magvault usb prepare-slave`)");
+            crate::say!("cancelled; the master is ready, the set has no slave yet (`magvault usb prepare-slave`)");
             return Ok(());
         };
         let master = waiting_master(scan_roots, Some(&label))?;
         match prepare_slave(cc, &slave_disk, &master, false) {
             Ok(_) => return Ok(()),
-            Err(e) if e.0.contains("smaller slave is refused") => eprintln!("  REFUSED: {}", e.0),
+            Err(e) if e.0.contains("smaller slave is refused") => crate::say!("  REFUSED: {}", e.0),
             Err(e) => return Err(e),
         }
     }
@@ -363,23 +363,23 @@ pub fn clean(
             stray.join(", ")
         );
     }
-    eprintln!("Clean field backup set · {}", set.label);
-    eprintln!(
+    crate::say!("Clean field backup set · {}", set.label);
+    crate::say!(
         "  All mags on {} are on the server. Wipe master and slave?",
         set.label
     );
-    eprintln!(
+    crate::say!(
         "  Deletes the {} mag folder(s) on both drives.",
         set.mags.len()
     );
-    eprintln!(
+    crate::say!(
         "  Keeps the set: {}, set id, size limit and the master / slave roles. No re-prepare.",
         fieldset::FILE
     );
-    eprintln!(
+    crate::say!(
         "  After clean the set is empty, still valid, ready for new mags. This action is logged."
     );
-    eprintln!("  Nothing is deleted until the sudo password is accepted.");
+    crate::say!("  Nothing is deleted until the sudo password is accepted.");
     if !yes && !util::confirm("  Wipe master and slave?")? {
         crate::bail!("cancelled; nothing was deleted");
     }
@@ -400,7 +400,7 @@ pub fn clean(
             set.label, out
         ),
     );
-    println!(
+    crate::out!(
         "cleaned   {}  ({n} mag(s) removed; set still valid and empty)",
         set.label
     );

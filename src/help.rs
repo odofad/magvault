@@ -32,6 +32,7 @@ BOTH
 GLOBAL
   --config <dir>   config directory (else MAGVAULT_CONFIG, else ~/.config/magvault/config-dir,
                    else /etc/magvault/config-dir)
+  --verbose, --debug   DEBUG lines in the daily log for this run (else `debug: yes` in magvault.conf)
   --version        print the version
 ";
 
@@ -198,15 +199,17 @@ magvault ui — the terminal UI (client)
 Client dashboard (server connection, local staging and field sets, recent activity) and
 the Ingest screen: detected cards, project, camera details, targets (local staging,
 server, field set as one row), Pull; the Prepare popup (o) and the Clean popup (c). It
-runs the same code as `ingest`, `usb prepare-master/-slave` and `usb clean`. For Pull,
-Prepare and Clean it steps aside to the plain terminal (copy progress, sudo's own password
-prompt), then Enter returns. `magvault` with no command opens it on a terminal.
+runs the same code as `ingest`, `sync`, `usb prepare-master/-slave` and `usb clean`,
+inside the TUI: a progress bar while copying, the sudo password asked in a prompt (never
+logged). `magvault` with no command opens it on a terminal.
 
 KEYS
   Esc back to the dashboard (closes a popup)   q quit (dashboard only)
   Tab / Shift+Tab pane   ↑↓ move   Enter pick / toggle
   dashboard: i Ingest, g Logging, l Library, s server dashboard (later phases), r refresh
   ingest: n new project, r rescan, p pull, o Prepare, c Clean
+  both: y sync pending mags, d show / hide details (paths, UUIDs, device names)
+  while a step runs: Ctrl-C cancels it
 
 FLAGS
   --scan-root <dir>   cards and field drives as folders in <dir> (tests, demos; repeatable)

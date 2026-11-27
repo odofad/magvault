@@ -28,6 +28,8 @@ use crate::util::{esc, human};
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub fn spool_dir(cfg: &Config) -> PathBuf {
@@ -54,6 +56,112 @@ fn write_readable(path: &Path, text: &str) -> Result<()> {
     Ok(())
 }
 
+/// Heartbeat for clients (`gate::serve_state`): written every 2 s by a thread while serve
+/// runs, with what it is doing; `stopped` when it ends.
+struct Heartbeat {
+    stop: Arc<AtomicBool>,
+    state: Arc<Mutex<String>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    path: PathBuf,
+}
+
+impl Heartbeat {
+    fn start(results: &Path) -> Heartbeat {
+        let stop = Arc::new(AtomicBool::new(false));
+        let state = Arc::new(Mutex::new("idle".to_string()));
+        let path = results.join(crate::gate::ALIVE_FILE);
+        let (s2, st2, p2) = (stop.clone(), state.clone(), path.clone());
+        let thread = std::thread::spawn(move || {
+            while !s2.load(Ordering::SeqCst) {
+                let line = format!("alive {} {} {}\n", time::now_secs(), std::process::id(), st2.lock().unwrap());
+                let _ = write_readable(&p2, &line);
+                for _ in 0..20 {
+                    if s2.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        });
+        Heartbeat { stop, state, thread: Some(thread), path }
+    }
+    fn set(&self, s: &str) {
+        *self.state.lock().unwrap() = s.to_string();
+    }
+}
+
+impl Drop for Heartbeat {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        let _ = write_readable(&self.path, &format!("stopped {}\n", time::now_secs()));
+    }
+}
+
+/// Per-client rate limits for lines written to the server log on a client's behalf:
+/// operational lines (INFO / WARN / ERROR) and DEBUG lines have separate budgets, so a
+/// burst of debug detail cannot crowd out a real problem.
+const CLIENT_LINES_PER_MINUTE: usize = 30;
+const CLIENT_DEBUG_PER_MINUTE: usize = 300;
+
+#[derive(Default)]
+struct ClientRate {
+    window: i64,
+    written: usize,
+    debug_written: usize,
+    dropped: usize,
+}
+
+/// Move queued client lines (gate `log` verb and gate verbs) into the server log:
+/// `WARN  client  rafiki  server committer down; ingest waiting`. DEBUG lines only when
+/// debug is on. At most CLIENT_LINES_PER_MINUTE (CLIENT_DEBUG_PER_MINUTE for DEBUG) per
+/// client; the rest is counted and reported.
+fn drain_client_logs(spool: &Path, log: &Log, rates: &mut BTreeMap<String, ClientRate>) {
+    let Ok(clients) = std::fs::read_dir(spool) else { return };
+    let now = time::now_secs();
+    for c in clients.flatten() {
+        let client = c.file_name().to_string_lossy().into_owned();
+        if !crate::gate::valid_client(&client) {
+            continue;
+        }
+        let rate = rates.entry(client.clone()).or_default();
+        if now / 60 != rate.window {
+            if rate.dropped > 0 {
+                log.warn("client", &format!("{client}  {} line(s) from this client dropped (rate limit)", rate.dropped));
+            }
+            *rate = ClientRate { window: now / 60, ..Default::default() };
+        }
+        let path = c.path().join(crate::gate::CLIENT_LOG);
+        let reading = c.path().join(format!("{}.reading", crate::gate::CLIENT_LOG));
+        if std::fs::rename(&path, &reading).is_err() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&reading).unwrap_or_default();
+        let _ = std::fs::remove_file(&reading);
+        for line in text.lines() {
+            let mut w = line.splitn(3, ' ');
+            let (_ts, lv, msg) = (w.next(), w.next(), w.next().unwrap_or(""));
+            let Some(level) = lv.and_then(crate::log::Level::parse) else { continue };
+            if level == crate::log::Level::Debug && !crate::log::debug_enabled() {
+                continue;
+            }
+            let (used, cap) = if level == crate::log::Level::Debug {
+                (&mut rate.debug_written, CLIENT_DEBUG_PER_MINUTE)
+            } else {
+                (&mut rate.written, CLIENT_LINES_PER_MINUTE)
+            };
+            if *used >= cap {
+                rate.dropped += 1;
+                continue;
+            }
+            *used += 1;
+            log.write(level, "client", &format!("{client}  {}", crate::gate::clean_line(msg)), &[]);
+        }
+    }
+}
+
 pub fn run(cfg: &Config, once: bool) -> Result<()> {
     let log = Log::new(&cfg.paths.logs);
     config::ensure_roots(&cfg.paths)?;
@@ -65,6 +173,8 @@ pub fn run(cfg: &Config, once: bool) -> Result<()> {
     mkdir_mode(&spool, 0o2770)?;
     mkdir_mode(&results, 0o2750)?;
     interrupt::install();
+    let beat = Heartbeat::start(&results);
+    let mut rates = BTreeMap::new();
     if !once {
         eprintln!(
             "serving client commits from {} (Ctrl+C to stop)",
@@ -74,8 +184,12 @@ pub fn run(cfg: &Config, once: bool) -> Result<()> {
     }
     loop {
         export_projects(&db, &results)?;
+        drain_client_logs(&spool, &log, &mut rates);
         for (client, folder) in ready_requests(&spool) {
+            beat.set(&format!("committing {folder}"));
+            log.debug("serve", &format!("accepted commit request {folder} from client {client}"));
             handle(cfg, &db, &log, &spool, &results, &client, &folder);
+            beat.set("idle");
             if interrupt::requested() {
                 break;
             }
@@ -157,6 +271,7 @@ fn handle(
     match commit_upload(cfg, db, &dir, folder) {
         Ok(msg) => {
             let _ = write_readable(&result_path, "committed\n");
+            log.debug("serve", &format!("commit {folder} from client {client}: committed"));
             log.info(
                 "ingest",
                 &format!("Mag {folder} committed from client {client} · {msg}"),
@@ -170,6 +285,7 @@ fn handle(
         Err(e) => {
             let first = e.0.lines().next().unwrap_or("").to_string();
             let _ = write_readable(&result_path, &format!("error: {}\n", esc(&first)));
+            log.debug("serve", &format!("commit {folder} from client {client}: rejected: {}", esc(&first)));
             let context: Vec<String> =
                 e.0.lines()
                     .map(|l| l.trim().to_string())
@@ -346,5 +462,34 @@ pub fn project_for_upload(db: &Db, uuid: &str, name: &str) -> Result<ProjectChoi
                 ))),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_lines_rate_limited_and_debug_filtered() {
+        let base = std::env::temp_dir().join(format!("mv-drain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (spool, logs) = (base.join("spool"), base.join("logs"));
+        std::fs::create_dir_all(spool.join("rafiki")).unwrap();
+        let mut text = String::from("1 DEBUG gate ping\n1 BOGUS not a level\n");
+        for i in 0..50 {
+            text.push_str(&format!("1 WARN [2026-11-27T08:00:00Z] server up, committer down #{i}\n"));
+        }
+        std::fs::write(spool.join("rafiki").join(crate::gate::CLIENT_LOG), text).unwrap();
+        let log = Log::new(&logs);
+        let mut rates = BTreeMap::new();
+        drain_client_logs(&spool, &log, &mut rates);
+        let all: String = std::fs::read_dir(&logs).unwrap().flatten().map(|e| std::fs::read_to_string(e.path()).unwrap()).collect();
+        let lines: Vec<&str> = all.lines().collect();
+        assert_eq!(lines.len(), CLIENT_LINES_PER_MINUTE, "{all}");
+        assert!(lines[0].contains("WARN   client    rafiki  [2026-11-27T08:00:00Z] server up, committer down #0"), "{}", lines[0]);
+        assert!(!all.contains("DEBUG") && !all.contains("BOGUS"), "DEBUG only with debug on; unknown levels dropped");
+        assert_eq!(rates["rafiki"].dropped, 20);
+        assert!(!spool.join("rafiki").join(crate::gate::CLIENT_LOG).exists(), "drained");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

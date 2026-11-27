@@ -129,17 +129,24 @@ impl Progress {
     }
     pub fn add(&mut self, n: u64) {
         self.done += n;
-        if self.tty && self.last.elapsed().as_millis() >= 500 {
+        let tui = crate::out::active();
+        if (self.tty || tui) && self.last.elapsed().as_millis() >= if tui { 200 } else { 500 } {
             self.draw();
             self.last = std::time::Instant::now();
         }
     }
     fn draw(&self) {
+        let m = crate::out::Msg::Progress { label: self.label.trim().to_string(), done: self.done, total: self.total };
+        if crate::out::send(m) {
+            return;
+        }
         let pct = (self.done * 100).checked_div(self.total).unwrap_or(100);
         eprint!("\r{}  {} / {}  ({pct}%)   ", self.label, human(self.done), human(self.total));
     }
     pub fn finish(&self) {
-        if self.tty {
+        if crate::out::active() {
+            self.draw();
+        } else if self.tty {
             self.draw();
             eprintln!();
         }

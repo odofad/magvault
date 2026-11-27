@@ -272,6 +272,22 @@ pub struct ClientConfig {
     /// None = no server configured (offline only).
     pub server: Option<ServerLink>,
     pub usb_helper: PathBuf,
+    /// `debug: yes` in the client's magvault.conf.
+    pub debug: bool,
+    /// How long ingest and sync wait for a server committer that is down
+    /// (`committer_wait` seconds in magvault.conf, default 120).
+    pub committer_wait: u64,
+}
+
+pub const DEFAULT_COMMITTER_WAIT: u64 = 120;
+
+/// `debug: yes|no` (default no).
+pub fn debug_setting(settings: &BTreeMap<String, String>, file: &Path) -> Result<bool> {
+    match settings.get("debug").map(|s| s.trim()) {
+        None | Some("") | Some("no") => Ok(false),
+        Some("yes") => Ok(true),
+        Some(other) => crate::bail!("{}: debug must be yes or no, not {other:?}", file.display()),
+    }
 }
 
 pub const DEFAULT_HELPER: &str = "/usr/lib/magvault/magvault-helper";
@@ -324,7 +340,22 @@ pub fn load_client(dir: &Path) -> Result<ClientConfig> {
             path_conf.display()
         ),
     };
+    let mv_conf = dir.join("magvault.conf");
+    let mut settings = BTreeMap::new();
+    if mv_conf.exists() {
+        let text = std::fs::read_to_string(&mv_conf).ctx(format!("cannot read {}", mv_conf.display()))?;
+        settings.extend(textfile::parse_config(&text));
+    }
+    let debug = debug_setting(&settings, &mv_conf)?;
+    let committer_wait = match settings.get("committer_wait").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        None => DEFAULT_COMMITTER_WAIT,
+        Some(v) => v.parse().map_err(|_| {
+            Error(format!("{}: committer_wait must be a number of seconds, not {v:?}", mv_conf.display()))
+        })?,
+    };
     let cfg = ClientConfig {
+        debug,
+        committer_wait,
         staging: resolve(&dir, &get("staging").unwrap()),
         logs: resolve(&dir, &get("logs").unwrap()),
         cameras: resolve(&dir, &get("cameras").unwrap()),

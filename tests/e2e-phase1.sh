@@ -145,13 +145,13 @@ grep -q "server  committed" "$W/i1.out" || { cat "$W/i1.out" "$W/i1.err"; fail "
 grep -q "^ok  *$F1" <<<"$(ms reconcile "$F1")" || fail "server reconcile of client mag"
 grep -q "INFO   ingest    Mag $F1 committed from client dit-a" "$SRV"/logs/*.log || fail "server log"
 grep -q "Mag $F1 committed on the server" "$CLI"/logs/*.log || fail "client log"
-[ -z "$(ls -A "$SRV/mags/.incoming/.clients/dit-a")" ] || fail "spool not empty after commit"
+[ -z "$(ls -A "$SRV/mags/.incoming/.clients/dit-a" | grep -v "^\.client-log")" ] || fail "spool not empty after commit"
 pass "card picked by discovery (no TTY), staged, verified, committed by serve (job linked to clips), staging cleaned, logged on both sides"
 
 echo "== TUI (a bot at the keyboard in a pseudo-terminal): dashboard → Ingest → pull → back"
 cat > "$W/tui1.script" <<'TUI'
 wait 1 Modules
-wait ● server connected
+wait ● server ready
 send i
 wait 1 Detected
 wait A7SIII_128
@@ -161,20 +161,21 @@ wait probe done
 send nTuiTest\r
 wait TuiTest  (new
 send p
-wait server  committed
-wait Press Enter to return to Magvault
-send \r
-wait ingested
+# The copy runs inside the TUI: progress bar with bytes and percent, no raw terminal.
+wait Pull A7SIII_128
+wait copying
+wait  %)
+wait Pull A7SIII_128: ingested mag
 send \e
 wait 1 Modules
 send q
 exit 0
 TUI
-python3 "$REPO/tests/tui_pty.py" "$W/tui1.script" -- "$MV" --config "$CCFG" ui --scan-root "$ONE" > "$W/tui1.out" 2>&1 || { cat "$W/tui1.out"; fail "TUI pull"; }
+FAKE_RSYNC_FILE_DELAY=0.6 python3 "$REPO/tests/tui_pty.py" "$W/tui1.script" -- "$MV" --config "$CCFG" ui --scan-root "$ONE" > "$W/tui1.out" 2>&1 || { cat "$W/tui1.out"; fail "TUI pull"; }
 TF=$(sql "select m.folder from mags m join projects p on p.id=m.project_id where p.name='TuiTest'")
 [ -n "$TF" ] && [ -d "$SRV/mags/$TF" ] && [ ! -e "$CLI/staging/$TF" ] || fail "TUI pull did not commit through the client ingest path"
 grep -q "Mag $TF committed on the server" "$CLI"/logs/*.log || fail "TUI pull not in the client log"
-pass "TUI: card picked with Enter, new project, p pulls through client ingest (committed, staging cleaned), Esc, q"
+pass "TUI: card picked with Enter, new project, p pulls inside the TUI with a progress bar (committed, staging cleaned), Esc, q"
 cat > "$W/tui2.script" <<'TUI'
 wait 1 Modules
 send i
@@ -209,6 +210,59 @@ mc sync > "$W/s1.out" 2>&1 || { cat "$W/s1.out"; fail "sync"; }
 grep -q "synced    $F2  (local staging, cleaned)" "$W/s1.out" || fail "sync output"
 [ -d "$SRV/mags/$F2" ] && [ ! -e "$CLI/staging/$F2" ] || fail "sync result"
 pass "sync: verified, committed, staging cleaned"
+
+echo "== committer down: gate up, serve down → 'server up, committer down', bounded waits, client issues on the server log"
+kill "$SERVE_PID"; wait "$SERVE_PID" 2>/dev/null || true
+grep -q "^stopped " "$SRV/mags/.incoming/.results/serve.alive" || fail "serve did not record its stop in the heartbeat"
+sed -i 's/^committer_wait:.*/committer_wait: 3/' "$CCFG/magvault.conf"
+grep -qx "serve down: stopped at .*" <<<"$(SSH_ORIGINAL_COMMAND=ping "$MV" gate --spool "$SRV/mags/.incoming/.clients" --results "$SRV/mags/.incoming/.results" --client dit-a | sed -n 2p)" || fail "gate ping does not report the committer"
+out=$(mc ingest "$CARD" "${ING[@]}" 2>&1) || { echo "$out"; fail "ingest with the committer down"; }
+grep -q "WARNING: server up, committer down (stopped at" <<<"$out" || { echo "$out"; fail "no committer-down warning"; }
+grep -q "server up, committer down for 3 s" <<<"$out" || { echo "$out"; fail "no timeout message"; }
+grep -q "  server  pending" <<<"$out" || { echo "$out"; fail "ingest should leave the mag pending"; }
+FD=$(awk '/^ingested /{print $2}' <<<"$out"); [ -d "$CLI/staging/$FD" ] || fail "pending mag not in staging"
+pass "ingest: warning 'server up, committer down', waited 3 s (committer_wait), mag stays pending"
+start=$(date +%s)
+expect_fail "sync times out with a clear message (does not spin)" "server up, committer down for 3 s" mc sync
+[ $(( $(date +%s) - start )) -lt 30 ] || fail "sync waited too long"
+cat > "$W/tui6.script" <<'TUI'
+wait ◐ server up, committer down
+wait Its committer is down
+send i
+wait Server          server up, committer down — the mag waits locally
+send \e
+wait 1 Modules
+send q
+exit 0
+TUI
+python3 "$REPO/tests/tui_pty.py" "$W/tui6.script" -- "$MV" --config "$CCFG" ui --scan-root "$W/mounts-none" > "$W/tui6.out" 2>&1 || { cat "$W/tui6.out"; fail "TUI committer down"; }
+pass "TUI dashboard and Ingest show 'server up, committer down' (never 'reachable')"
+"$MV" --config "$SCFG" --debug serve > "$W/serve2.log" 2>&1 &   # restarted with DEBUG lines for this run
+SERVE_PID=$!
+sleep 1
+mc --debug sync > "$W/s9.out" 2>&1 || { cat "$W/s9.out"; fail "sync after serve restart"; }
+grep -q "synced    $FD" "$W/s9.out" || fail "pending mag not synced after restart"
+sleep 3   # serve drains the client lines every 2 s
+grep -qE "WARN   client    dit-a  \[[0-9T:Z-]+\] server up, committer down" "$SRV"/logs/*.log || fail "client issue (committer down) not on the server log"
+grep -qE "ERROR  client    dit-a  \[[0-9T:Z-]+\] timeout: server up, committer down for 3 s" "$SRV"/logs/*.log || fail "client timeout not on the server log"
+grep -qE "ERROR  client    dit-a  \[[0-9T:Z-]+\] sync: Mag $FD failed, stays pending" "$SRV"/logs/*.log || fail "client sync error not on the server log"
+pass "client issues (committer down, timeout, sync error) on the server log with the client label"
+grep -q "DEBUG  client    dit-a  gate commit $FD" "$SRV"/logs/*.log || fail "gate verb not in the server DEBUG log"
+grep -q "DEBUG  serve     accepted commit request $FD from client dit-a" "$SRV"/logs/*.log || fail "serve accept not in DEBUG"
+grep -q "DEBUG  ingest    rename .*$FD" "$SRV"/logs/*.log || fail "incoming rename not in DEBUG"
+grep -q "DEBUG  verify    start" "$SRV"/logs/*.log || fail "server hash verify not in DEBUG"
+for w in "DEBUG  rsync     start copying" "DEBUG  rsync     end copying" "DEBUG  verify    start verifying local copy" "DEBUG  gate      call commit"; do
+  grep -q "$w" "$CLI"/logs/*.log || fail "client DEBUG line missing: $w"
+done
+grep -qE "DEBUG  client    dit-a  \[[0-9T:Z-]+\] rsync: start copying" "$SRV"/logs/*.log || fail "client DEBUG lines not forwarded to the server log"
+[ ! -s "$CCFG/issues.pending" ] || fail "client issue queue not flushed"
+sed -i 's/^committer_wait:.*/committer_wait: 120/' "$CCFG/magvault.conf"
+pass "--debug: gate verbs, serve accept, rsync start/end, hash verify, rename; client DEBUG forwarded to the server"
+before=$(grep -c "DEBUG" "$CLI"/logs/*.log | awk -F: '{s+=$NF} END {print s}')
+mc projects > /dev/null
+after=$(grep -c "DEBUG" "$CLI"/logs/*.log | awk -F: '{s+=$NF} END {print s}')
+[ "$before" = "$after" ] || fail "DEBUG lines written without debug on"
+pass "no DEBUG lines without debug: yes / --debug"
 
 echo "== a corrupted local copy is not sent"
 mc ingest "$CARD" "${ING[@]}" --no-sync > "$W/i3.out" 2>/dev/null
@@ -413,10 +467,7 @@ wait [ c Clean ]
 send c
 wait All mags on FIELD-L are on the server. Wipe master and slave?
 send \\r
-wait cleaned   FIELD-L
-wait Press Enter to return to Magvault
-send \\r
-wait cleaned         FIELD-L; set still valid and empty
+wait Clean FIELD-L: FIELD-L cleaned; set still valid and empty
 send \\e
 wait 1 Modules
 send q
@@ -435,24 +486,20 @@ wait 5 Targets
 send \\t\\t\\t\\t
 send o
 wait Mount the smaller drive first and prepare it as master.
+# d: device names (hidden by default) so the bot can find its loop device.
+send d
 seek $LT64 
 send \\r
-wait ALL DATA ON $LT64 WILL BE DESTROYED.
+wait WILL BE DESTROYED.
 send e
 send \\x7f\\x7f\\x7f\\x7f\\x7f\\x7f\\x7fFIELD-T\\r
 wait label FIELD-T
-send \\r
-wait master ready: FIELD-T
-wait Press Enter to return to Magvault
 send \\r
 wait step 2 of 2 · slave of FIELD-T
 seek $LT96 
 wait Will use 67.1 MB to match master. Rest unused.
 send \\r\\r
-wait slave ready: set FIELD-T is complete
-wait Press Enter to return to Magvault
-send \\r
-wait set complete
+wait slave of FIELD-T ready; set complete
 send \\e
 wait 1 Modules
 send q

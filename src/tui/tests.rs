@@ -74,6 +74,7 @@ fn disk(path: &str, size: u64, label: &str) -> DriveRow {
             path: path.into(),
             size,
             label: label.into(),
+            model: "ST500LM021".into(),
             mounts: vec![PathBuf::from(format!("/media/op/{label}"))],
             backup: None,
         }),
@@ -96,7 +97,7 @@ fn set(label: &str, state: Option<MagState>) -> FieldSet {
 
 fn snapshot() -> Snapshot {
     let mut s = Snapshot::empty(PathBuf::from("/home/op/mvclient/staging"));
-    s.server = ServerState::Online("magvaultclient@courage".into());
+    s.server = ServerState::Ready("magvaultclient@courage".into());
     s.cards = vec![card("A7SIII_128")];
     s.cameras = vec![camera()];
     s.projects = vec![("cce28b9f-0000-4000-8000-000000000001".into(), "CardTestFix".into())];
@@ -153,14 +154,14 @@ fn to_targets_row(app: &mut App, row: usize) {
 fn dashboard_then_ingest_and_back() {
     let mut app = App::new(snapshot(), Vec::new());
     let s = screen(&app, 150, 42, "dashboard");
-    for want in ["MAGVAULT  ·  Dashboard  ·  client", "1 Modules", "[i] Ingest", "[s] Server dashboard", "2 Server", "● online", "3 Local media", "4 Recent local activity", "q quit"] {
+    for want in ["MAGVAULT  ·  Dashboard", "1 Modules", "[i] Ingest", "[s] Server dashboard", "2 Server", "● server ready", "3 Local media", "4 Recent activity", "Next", "1 card(s) detected. Press i to ingest.", "q quit"] {
         assert!(s.contains(want), "dashboard misses {want:?}\n{s}");
     }
     let acts = press(&mut app, &[ch('i')]);
     assert!(matches!(acts.as_slice(), [Action::Refresh]));
     assert_eq!(app.screen, Screen::Ingest);
     let s = screen(&app, 150, 42, "ingest-empty");
-    for want in ["1 Detected", "2 Files", "3 Project", "4 Details", "5 Targets", "[ p  PULL ]", "Sony A7S III", "Esc dashboard"] {
+    for want in ["1 Detected", "2 Files", "3 Project", "4 Details", "5 Targets", "[ p  PULL ]", "Sony A7S III", "A7SIII_128", "Next: Pick a card", "Esc back"] {
         assert!(s.contains(want), "ingest misses {want:?}\n{s}");
     }
     // q does not quit outside the dashboard; Esc returns; q quits there.
@@ -181,7 +182,9 @@ fn one_card_selected_then_pull_uses_the_cli_arguments() {
     let mut app = in_ingest_with_card();
     let s = screen(&app, 150, 42, "ingest-card");
     assert!(s.contains("● selected"), "{s}");
-    assert!(s.contains("C0001.MP4  [clip]"), "{s}");
+    assert!(s.contains(" C0001.MP4  [clip]"), "{s}");
+    assert!(!s.contains("PRIVATE/M4ROOT/CLIP/C0001.MP4"), "full card paths only with d\n{s}");
+    assert!(!s.contains("/media/op/"), "mount paths only with d\n{s}");
     assert!(s.contains("2011-04-30   guessed"), "{s}");
     assert!(s.contains("missing: project"), "{s}");
     // Without a project, p explains what is missing and starts nothing.
@@ -233,10 +236,14 @@ fn prepare_popup_opens_and_esc_returns_to_ingest() {
     to_targets_row(&mut app, 2); // first not-valid drive (NEW_64)
     press(&mut app, &[ch('o')]);
     let s = screen(&app, 150, 42, "prepare-master");
-    for want in ["Prepare USB drive · step 1 of 2 · master", "Mount the smaller drive first and prepare it as master.", "/dev/sdb  64.0 GB", "/dev/sdc  128.0 GB", "Esc  Cancel · nothing is written until sudo is accepted"] {
+    for want in ["Prepare USB drive · step 1 of 2 · master", "Mount the smaller drive first and prepare it as master.", "ST500LM021 · 64.0 GB · NEW_64", "ST500LM021 · 128.0 GB · NEW_128", "this drive has an existing ZFS signature", "Esc  Cancel · nothing is written until sudo is accepted"] {
         assert!(s.contains(want), "prepare popup misses {want:?}\n{s}");
     }
-    assert!(!s.contains("A7SIII_128  ·"), "the camera card is not a Prepare target");
+    assert!(!s.contains("/dev/sd"), "device nodes only with d\n{s}");
+    press(&mut app, &[ch('d')]);
+    let t = screen(&app, 150, 42, "prepare-master-details");
+    assert!(t.contains("ST500LM021 · 64.0 GB · NEW_64 · /dev/sdb · /media/op/NEW_64"), "{t}");
+    press(&mut app, &[ch('d')]);
     // Esc closes the popup and stays on Ingest; nothing was asked of the runtime.
     assert!(press(&mut app, &[key(KeyCode::Esc)]).is_empty());
     assert!(app.popup.is_none());
@@ -245,20 +252,37 @@ fn prepare_popup_opens_and_esc_returns_to_ingest() {
     // Enter picks and shows the confirmation; Esc goes back to the list; Enter twice confirms.
     press(&mut app, &[ch('o'), key(KeyCode::Enter)]);
     let s = screen(&app, 120, 36, "prepare-master-confirm");
-    assert!(s.contains("ALL DATA ON /dev/sdb WILL BE DESTROYED."), "{s}");
+    assert!(s.contains("ALL DATA ON THIS DRIVE (ST500LM021 · 64.0 GB · NEW_64) WILL BE DESTROYED."), "{s}");
     assert!(s.contains("label FIELD-A"), "{s}");
     press(&mut app, &[key(KeyCode::Esc)]);
     assert!(matches!(&app.popup, Some(Popup::Prepare(p)) if !p.confirm));
-    let acts = press(&mut app, &[key(KeyCode::Enter), key(KeyCode::Enter)]);
-    assert!(
-        matches!(acts.as_slice(), [Action::PrepareMaster { disk, label }] if disk.path == "/dev/sdb" && label == "FIELD-A"),
-        "{acts:?}"
-    );
+    // Confirm → the sudo password, in the TUI; Esc cancels (reported), Enter runs.
+    assert!(press(&mut app, &[key(KeyCode::Enter), key(KeyCode::Enter)]).is_empty());
+    assert!(matches!(&app.popup, Some(Popup::Password { .. })));
+    for c in "s3cret".chars() {
+        press(&mut app, &[ch(c)]);
+    }
+    let s = screen(&app, 150, 42, "sudo-prompt");
+    assert!(s.contains("Prepare the master of FIELD-A needs your sudo password."), "{s}");
+    assert!(s.contains("Password  ••••••"), "{s}");
+    assert!(!s.contains("s3cret"), "the password is never shown");
+    let acts = press(&mut app, &[key(KeyCode::Esc)]);
+    assert!(matches!(acts.as_slice(), [Action::SudoCancelled(w)] if w == "Prepare master of FIELD-A"), "{acts:?}");
+    assert!(app.popup.is_none());
+    press(&mut app, &[ch('o'), key(KeyCode::Enter), key(KeyCode::Enter)]);
+    for c in "s3cret".chars() {
+        press(&mut app, &[ch(c)]);
+    }
+    let acts = press(&mut app, &[key(KeyCode::Enter)]);
+    let [Action::PrepareMaster { disk, label, password: Some(pw) }] = acts.as_slice() else { panic!("{acts:?}") };
+    assert_eq!((disk.path.as_str(), label.as_str(), pw.0.as_str()), ("/dev/sdb", "FIELD-A", "s3cret"));
+    assert_eq!(format!("{pw:?}"), "Secret(***)", "Debug never prints the password");
 }
 
 #[test]
 fn prepare_refuses_signature_disk_and_smaller_slave() {
     let mut app = in_ingest_with_card();
+    app.needs_sudo = false; // as root: no password prompt
     to_targets_row(&mut app, 0);
     press(&mut app, &[ch('o'), key(KeyCode::Down), key(KeyCode::Down), key(KeyCode::Down)]);
     let s = screen(&app, 150, 42, "prepare-zfs");
@@ -278,7 +302,7 @@ fn prepare_refuses_signature_disk_and_smaller_slave() {
     let shown = screen(&app, 150, 42, "prepare-slave");
     assert!(shown.contains("step 2 of 2 · slave of FIELD-A"), "{shown}");
     assert_eq!(app.prepare_rows(), vec![1, 2, 3], "the master (/dev/sdb) is not offered as its own slave");
-    assert!(shown.contains("▶ /dev/sdc  128.0 GB"), "{shown}");
+    assert!(shown.contains("▶ ST500LM021 · 128.0 GB · NEW_128"), "{shown}");
     // Rows: NEW_128, NEW_32, ZFS disk. The larger one: "Will use …".
     let p = |app: &App| match &app.popup {
         Some(Popup::Prepare(p)) => p.note.clone().unwrap_or_default(),
@@ -291,7 +315,7 @@ fn prepare_refuses_signature_disk_and_smaller_slave() {
     press(&mut app, &[key(KeyCode::Up)]);
     let acts = press(&mut app, &[key(KeyCode::Enter), key(KeyCode::Enter)]);
     assert!(
-        matches!(acts.as_slice(), [Action::PrepareSlave { disk, label }] if disk.path == "/dev/sdc" && label == "FIELD-A"),
+        matches!(acts.as_slice(), [Action::PrepareSlave { disk, label, password: None }] if disk.path == "/dev/sdc" && label == "FIELD-A"),
         "{acts:?}"
     );
 }
@@ -301,9 +325,10 @@ fn clean_not_offered_while_pending_offered_when_synced() {
     let mut s = snapshot();
     s.sets = vec![set("TESTSET1", Some(MagState::Pending))];
     let mut app = App::new(s, Vec::new());
+    app.needs_sudo = false;
     press(&mut app, &[ch('i')]);
     let shown = screen(&app, 150, 42, "clean-pending");
-    assert!(shown.contains("TESTSET1  master + slave  320.0 GB · valid · 1 pending sync"), "{shown}");
+    assert!(shown.contains("Field set       TESTSET1  320.0 GB · valid · 1 pending sync"), "{shown}");
     assert!(!shown.contains("c Clean ]"), "{shown}");
     to_targets_row(&mut app, 2);
     assert!(press(&mut app, &[ch('c')]).is_empty());
@@ -328,7 +353,7 @@ fn clean_not_offered_while_pending_offered_when_synced() {
     assert!(app.popup.is_none());
     assert_eq!(app.screen, Screen::Ingest);
     let acts = press(&mut app, &[ch('c'), key(KeyCode::Enter)]);
-    assert!(matches!(acts.as_slice(), [Action::Clean { label }] if label == "TESTSET1"), "{acts:?}");
+    assert!(matches!(acts.as_slice(), [Action::Clean { label, password: None }] if label == "TESTSET1"), "{acts:?}");
 }
 
 #[test]
@@ -368,4 +393,60 @@ fn details_pickers_offer_profile_values_only_and_new_project() {
 fn small_terminal_asks_to_resize() {
     let app = App::new(snapshot(), Vec::new());
     assert!(screen(&app, 100, 30, "small").contains("Resize the terminal"));
+}
+
+#[test]
+fn running_step_shows_progress_and_ctrl_c_cancels() {
+    use crate::out::Msg;
+    let mut app = in_ingest_with_card();
+    app.start_job("Pull A7SIII_128");
+    app.job_msg(Msg::Line {
+        err: true,
+        text: format!("copying with rsync → /home/op/mvclient/staging/.incoming/{F1}/"),
+    });
+    app.job_msg(Msg::Progress { label: "copying".into(), done: 25_000_000, total: 50_000_000 });
+    let s = screen(&app, 150, 42, "job-progress");
+    for want in ["Pull A7SIII_128", " copying", "25.0 MB / 50.0 MB  (50 %)", "copying with rsync → mag 2026-11-26", "Ctrl-C cancels"] {
+        assert!(s.contains(want), "job popup misses {want:?}\n{s}");
+    }
+    assert!(!s.contains("/home/op") && !s.contains("aaaaaaaa-bbbb"), "paths and UUIDs only with d\n{s}");
+    // While it runs, other keys do nothing; Ctrl-C asks once to stop.
+    assert!(press(&mut app, &[ch('p'), key(KeyCode::Esc), ch('o')]).is_empty());
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    assert!(matches!(press(&mut app, &[ctrl_c]).as_slice(), [Action::Cancel]));
+    assert!(press(&mut app, &[ctrl_c]).is_empty());
+    assert!(screen(&app, 150, 42, "job-cancelling").contains("cancelling…"));
+    // The step ends: back on Ingest (no "press Enter"), the failure in a popup.
+    app.job_done(Err("interrupted by SIGINT; nothing committed".into()));
+    assert!(app.job.is_none());
+    assert_eq!(app.screen, Screen::Ingest);
+    assert!(matches!(&app.popup, Some(Popup::Message(m)) if m[0] == "Pull A7SIII_128 failed:"));
+}
+
+#[test]
+fn committer_down_is_never_shown_as_reachable() {
+    let mut s = snapshot();
+    s.server = ServerState::CommitterDown("magvaultclient@courage".into(), "no heartbeat for 40 s".into());
+    s.staging_pending = vec![F1.into()];
+    let mut app = App::new(s, Vec::new());
+    let d = screen(&app, 150, 42, "dashboard-committer-down");
+    for want in ["◐ server up, committer down", "1 mag(s) wait for the server. Its committer is down", "The server answers but does not commit"] {
+        assert!(d.contains(want), "dashboard misses {want:?}\n{d}");
+    }
+    assert!(!d.contains("reachable") && !d.contains("● server ready"), "{d}");
+    press(&mut app, &[ch('i')]);
+    let i = screen(&app, 150, 42, "ingest-committer-down");
+    assert!(i.contains("Server          server up, committer down — the mag waits locally"), "{i}");
+    assert!(i.contains("[!] No backup and server sync not confirmed"), "{i}");
+    assert!(!i.contains("reachable"), "{i}");
+    press(&mut app, &[ch('d')]);
+    assert!(screen(&app, 150, 42, "ingest-committer-down-details").contains("(magvaultclient@courage)"));
+}
+
+#[test]
+fn plain_wording_hides_paths_uuids_devices() {
+    use super::view::scrub;
+    let raw = format!("Mag {F1} copied to /home/op/mvclient/staging/{F1} from /dev/sdd1 (project cce28b9f-0000-4000-8000-000000000001).");
+    assert_eq!(scrub(&raw, false), "Mag mag 2026-11-26 copied to mag 2026-11-26 from drive (project …).");
+    assert_eq!(scrub(&raw, true), raw);
 }

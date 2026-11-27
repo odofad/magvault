@@ -88,6 +88,14 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
     if a.via == Via::Direct && !online {
         crate::bail!("--via direct needs the server, and it is not reachable; use --via staging or --via set");
     }
+    if a.via == Via::Direct {
+        // Nothing is copied before the server can commit: the card is the only copy.
+        transport
+            .as_ref()
+            .expect("online implies a transport")
+            .wait_ready(cc.committer_wait, "direct ingest")
+            .map_err(|e| Error(format!("{}; nothing copied", e.0)))?;
+    }
     let mut set: Option<FieldSet> = None;
     if a.via == Via::Set || a.mirror_set {
         let s = fieldset::choose_set(
@@ -218,9 +226,13 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
                 Err(e) if a.via == Via::Direct => return Err(e),
                 Err(e) if interrupt::requested() => return Err(e),
                 Err(e) => {
-                    eprintln!(
+                    crate::say!(
                         "warning: server sync failed: {}",
                         esc(e.0.lines().next().unwrap_or(""))
+                    );
+                    crate::client::queue_issue(
+                        Level::Error,
+                        &format!("ingest: Mag {folder} not synced, stays pending: {}", e.0.lines().next().unwrap_or("")),
                     );
                     log.write(
                         Level::Warn,
@@ -253,12 +265,12 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
                     "no field-set backup and the server has not confirmed {folder}: the only copies are {} and the card. Keep the card until `magvault sync` succeeds.",
                     cc.staging.join(&folder).display()
                 );
-                eprintln!("WARNING: {msg}");
+                crate::say!("WARNING: {msg}");
                 log.warn("ingest", &msg);
             }
-            println!("ingested {folder}");
-            println!("  route   {route}");
-            println!(
+            crate::out!("ingested {folder}");
+            crate::out!("  route   {route}");
+            crate::out!(
                 "  server  {}",
                 if synced {
                     "committed"
@@ -270,6 +282,9 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
         }
         Err(e) => {
             ingest::log_failure(&log, &src, &e);
+            if !interrupt::requested() {
+                crate::client::queue_issue(Level::Error, &format!("ingest failed: {}", e.0.lines().next().unwrap_or("")));
+            }
             Err(e)
         }
     }
@@ -291,6 +306,7 @@ pub fn put_in_staging(
         std::fs::create_dir(&st.dir).ctx(format!("cannot create {}", st.dir.display()))?;
         fill(&st.dir, &st.list)?;
         interrupt::check()?;
+        crate::log::dbg("ingest", &format!("rename {} → {}", esc(&st.dir.display().to_string()), esc(&target.display().to_string())));
         std::fs::rename(&st.dir, &target).ctx(format!("cannot move into {}", root.display()))?;
         Ok(())
     })();
@@ -411,7 +427,7 @@ fn send_direct(
         let meta: Vec<&str> = meta.iter().map(String::as_str).collect();
         t.upload(&st.dir, &meta, folder, &st.list)?;
         t.commit(folder)?;
-        t.wait_committed(folder)
+        t.wait_committed(folder, cc.committer_wait)
     })();
     st.finish(false);
     r

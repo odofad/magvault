@@ -64,6 +64,11 @@ pub fn default_sigpipe() {
     }
 }
 
+/// Ask the running step to stop, as Ctrl-C would (the TUI's Ctrl-C during a copy).
+pub fn request() {
+    RECEIVED.store(2, Ordering::SeqCst);
+}
+
 /// Forget an earlier signal (the TUI runs several ingests in one process).
 pub fn reset() {
     RECEIVED.store(0, Ordering::SeqCst);

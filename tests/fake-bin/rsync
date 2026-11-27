@@ -7,7 +7,9 @@
 # file with its modification time. Set FAKE_RSYNC_CORRUPT=1 to flip one byte in the
 # first copied file (to test integrity-error handling), FAKE_RSYNC_FAIL=<code> to exit
 # with an error after copying half the files, FAKE_RSYNC_DELAY=<seconds> to wait before
-# copying (so interrupt tests can signal it mid-copy).
+# copying (so interrupt tests can signal it mid-copy), FAKE_RSYNC_FILE_DELAY=<seconds> to
+# wait after each file (so progress can be watched). Progress lines are written like
+# rsync --info=progress2 ("\r   1,234  45%  ...").
 import os, shutil, sys, time
 
 args = sys.argv[1:]
@@ -36,6 +38,9 @@ if files_from is None or len(paths) != 2:
 src, dst = paths
 data = open(files_from, "rb").read()
 names = [n.decode() for n in (data.split(b"\0") if from0 else data.splitlines()) if n]
+total = sum(os.path.getsize(os.path.join(src, n)) for n in names if os.path.isfile(os.path.join(src, n))) or 1
+done = 0
+file_delay = float(os.environ.get("FAKE_RSYNC_FILE_DELAY", "0"))
 fail = os.environ.get("FAKE_RSYNC_FAIL")
 time.sleep(float(os.environ.get("FAKE_RSYNC_DELAY", "0")))
 for i, rel in enumerate(names):
@@ -55,4 +60,8 @@ for i, rel in enumerate(names):
             b = f.read(1)
             f.seek(0)
             f.write(bytes([b[0] ^ 0xFF]))
-print(f"{len(names)} files copied (test double)")
+    done += st.st_size
+    sys.stdout.write(f"\r{done:>15,} {done * 100 // total:>3}%    1.00MB/s    0:00:00 (xfr#{i + 1}, to-chk={len(names) - i - 1}/{len(names)})")
+    sys.stdout.flush()
+    time.sleep(file_delay)
+print(f"\n{len(names)} files copied (test double)")

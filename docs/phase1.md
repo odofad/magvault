@@ -18,6 +18,7 @@ same order.
 sudo apt install build-essential libsqlite3-dev rsync ffmpeg openssh-client   # client and server
 sudo apt install openssh-server                                                # server (rrsync ships with rsync ≥ 3.2.4)
 # cargo needs crates.io access once to fetch ratatui (the only dependency); Cargo.lock pins it.
+# Update the server before the clients (a new client needs the gate's committer line).
 cargo build --release      # target/release/magvault and target/release/magvault-helper
 cargo test
 tests/e2e.sh               # Phase 0 regression
@@ -56,35 +57,93 @@ a server config.
 (ratatui). `magvault ui --scan-root <dir>` uses folders as cards and drives, like the
 commands. Without a terminal, `magvault` prints the help and `magvault ui` refuses.
 
-- **Dashboard** (landing): server connection (ping through the gate), local staging
-  (pending mags), field sets and not-valid drives, recent local activity (the newest log
-  lines). Modules: `i` Ingest; `g` Logging, `l` Library and `s` server dashboard are
-  stubs for later phases. `r` refreshes, `q` quits (dashboard only).
+- **Plain by default.** The screens show card label, camera, project, set name,
+  pending / synced / empty, the server status and the next action. Paths, UUIDs, device
+  nodes and the raw log format appear only after `d` (details; `d` again hides them).
+- **Dashboard** (landing): a "Next" line (the one thing to do now), server status,
+  local staging and field sets, recent activity (newest log lines, plain). Modules:
+  `i` Ingest; `g` Logging, `l` Library and `s` server dashboard are stubs for later
+  phases. `y` syncs pending mags, `r` refreshes, `q` quits (dashboard only).
 - **Ingest**: panes 1 Detected (cards, plus "type a path…"), 2 Files (the probed card),
   3 Project (open projects; `n` new project by name, same rule as `--project`),
   4 Details (camera, format, gamma, gamut from the camera profile only; shoot day; notes),
   5 Targets (local staging, server, each field set as one row, each not-valid USB drive
-  with `[ o Prepare ]`; camera cards are never listed there). Enter or Space toggles a
-  target. The checkboxes map to the CLI routes: staging = default, staging + set =
-  `--mirror-set`, set only = `--via set`, server only = `--via direct`, server unticked
-  = `--no-sync`. The warning line shows when no field set is ticked (and says so more
-  strongly when the server is not confirmed). `p` pulls once card, camera, project, shoot
-  day and a target are set; otherwise it lists what is missing.
-- **Prepare popup** (`o`): the smaller-first warning, the drives with sizes (refused ones
-  with the reason), Enter picks, Enter again confirms (`e` edits the set label). On a set
-  row waiting for its slave, `o` opens the slave step; a smaller slave is refused, a larger
-  one shows "Will use X to match master. Rest unused." Esc cancels.
+  by model and size with `[ o Prepare ]`; camera cards are never listed there). Enter or
+  Space toggles a target. The checkboxes map to the CLI routes: staging = default,
+  staging + set = `--mirror-set`, set only = `--via set`, server only = `--via direct`,
+  server unticked = `--no-sync`. The warning line shows when no field set is ticked (and
+  says so more strongly when the server is not confirmed). `p` pulls once card, camera,
+  project, shoot day and a target are set; otherwise it lists what is missing.
+- **Prepare popup** (`o`): the smaller-first warning, the drives with model and size
+  (refused ones with the reason), Enter picks, Enter again confirms (`e` edits the set
+  label). On a set row waiting for its slave, `o` opens the slave step; a smaller slave
+  is refused, a larger one shows "Will use X to match master. Rest unused." Esc cancels.
 - **Clean popup** (`c`): only on a fully synced set; otherwise the reason is shown.
 
-Pull, Prepare and Clean call `client_ingest::run`, `usb::prepare_master`,
-`usb::prepare_slave` and `usb::clean` — the code behind `ingest`, `usb prepare-*` and
-`usb clean` — with the operator's choices and `--yes` (the TUI popup is the
-confirmation). For these steps the TUI steps aside: the plain terminal shows the copy
-progress or sudo's own password prompt, then "Press Enter to return to Magvault".
-Ctrl-C there aborts an ingest (nothing committed) or cancels sudo (nothing written).
-This differs from the mockups, which draw the password field and the progress bar inside
-the TUI: the password never passes through Magvault, and progress inside the TUI is left
-for later.
+**Steps run inside the TUI.** Pull, Sync (`y`), Prepare and Clean call
+`client_ingest::run`, `sync::run`, `usb::prepare_master`, `usb::prepare_slave` and
+`usb::clean` — the code behind `ingest`, `sync`, `usb prepare-*` and `usb clean` — with
+the operator's choices and `--yes` (the TUI popup is the confirmation). They run on a
+worker thread; what the CLI would print and its progress come back through one output
+sink (`src/out.rs`): a progress popup shows the stage (hashing, copying / uploading,
+verifying, server), a bar with bytes and percent (rsync `--info=progress2`, hash and
+verify progress) and the latest lines. When the step ends, the TUI stays where it was:
+one line in the log, a message on failure. Ctrl-C while a step runs cancels it (an
+ingest commits nothing; a mag already copied stays pending).
+
+**Sudo in the TUI.** Prepare and Clean ask for the sudo password in a focused prompt
+(dots on screen). The password is handed once to `sudo -k -S` for that helper call,
+then dropped; it is never logged or shown, and the `Secret` type hides it from debug
+output. Esc or Ctrl-C at the prompt cancels: nothing is written, and "sudo cancelled" is
+logged locally and reported to the server log. As root there is no prompt.
+
+## Server status: ready, committer down, offline
+
+PLAN.md "Client ↔ server status". `magvault serve` writes a heartbeat
+(`mags/.incoming/.results/serve.alive`: `alive <time> <pid> <state>` every 2 s, `stopped
+<time>` when it stops). The gate's `ping` (and `status`) add a second line, `serve
+alive` or `serve down: <why>` (heartbeat older than 10 s, stopped, never started). The
+client calls the server **ready** only on `serve alive`; gate up with serve down is
+**server up, committer down**, never "reachable"; no answer is **offline**. The
+dashboard, Ingest and `magvault projects` use the same check.
+
+Ingest and sync wait for a committer that is down: they print the warning, retry, and
+stop after `committer_wait` seconds (client `magvault.conf`, default 120) with a clear
+message; the mag stays pending in staging or on the set. `sync` stops at the first such
+timeout instead of waiting again for every mag. `--via direct` waits before copying
+anything (the card is the only copy). A commit already queued keeps waiting while serve
+is alive (busy verifying a large mag still sends heartbeats).
+
+Update the server (gate + serve) before the clients: a new client treats an old gate
+(no committer line) as "committer down".
+
+## Client issues on the server log
+
+PLAN.md "Client issues on the server log". The client queues operational problems in
+`<config>/issues.pending`: cannot reach the server, committer down, timeouts,
+ingest / sync errors, sudo cancelled (plus DEBUG lines when debug is on). They are sent
+with the gate's new `log` verb (lines on stdin) whenever the gate answers (every ping)
+and at the end of each client command; a connection failure is reported when the
+connection is back, with its original time. Limits: the client drops repeats of the
+same line within 60 s and keeps at most 200 queued lines; the gate keeps at most
+256 KiB per client; serve writes at most 30 operational and 300 DEBUG lines per client
+per minute and reports what it dropped. Every line is made printable, one line, at
+most 300 characters. Messages are Magvault's own; no passwords or key material.
+
+Server log line: `2026-11-27T08:30:10Z  WARN   client    rafiki  [2026-11-27T08:30:03Z]
+server up, committer down; sync waiting` (the bracket is the client's time).
+
+## Debug logging
+
+PLAN.md "Debug logging". `debug: yes` in `magvault.conf` (server: the existing file;
+client: `<config>/magvault.conf`, created by `init --mode client` with `debug: no`), or
+`--verbose` / `--debug` for one run (`magvault --debug sync`, `magvault --debug serve`).
+DEBUG lines go into the same daily log files. Covered: gate verbs (the gate queues one
+line per verb; serve writes them only when its debug is on), gate calls on the client,
+serve accept / commit / reject, rsync start and end (destination, file count, status,
+duration), hash at ingest, every verify (start / end, ok or MISMATCH), the rename from
+incoming into place, helper calls (arguments and result; never the sudo password). On a
+client, DEBUG lines are also sent to the server log through the client-issues path.
 
 ## What the pieces do
 
@@ -303,13 +362,21 @@ otherwise.
 TUI: `cargo test` runs key-script tests on ratatui's TestBackend (dashboard → Ingest,
 one card picked and probed, Pull arguments, target routes, Prepare popup open / Esc /
 confirm, refused ZFS disk and smaller slave, Clean hidden while pending and offered when
-synced, pickers, resize message; `MAGVAULT_TUI_DUMP=<dir>` writes the screens as text).
+synced, pickers, resize message, sudo prompt (dots, Esc reports, the password never on
+screen or in Debug), progress popup and Ctrl-C, committer down never "reachable", plain
+wording; `MAGVAULT_TUI_DUMP=<dir>` writes the screens as text).
 `tests/e2e-phase1.sh` also drives the real binary in a pseudo-terminal
-(`tests/tui_pty.py`, a small VT100 emulator): a full pull from the TUI through the
-client ingest to a server commit, the Prepare popup and Esc, and as root Clean (refused
-while pending, then done) and Prepare (master with an edited label, larger slave limited)
-on loop devices.
+(`tests/tui_pty.py`, a small VT100 emulator): a full pull inside the TUI with the
+progress bar (the rsync stand-in prints progress2 lines; `FAKE_RSYNC_FILE_DELAY` slows
+it) through the client ingest to a server commit, the Prepare popup and Esc, the
+committer-down status, and as root Clean (refused while pending, then done) and Prepare
+(master with an edited label, larger slave limited) on loop devices. The committer-down
+section stops serve: ingest warns, waits `committer_wait` (3 s in the test) and leaves
+the mag pending; sync times out; after a restart with `--debug` the client issues and
+DEBUG lines (gate verbs, serve accept, rsync, verify, rename, forwarded client lines)
+are checked in both logs.
 
 Not covered by the script (manual on courage): SSH + rrsync, the sudo prompt, real USB
 drives and automount, real ZFS/LVM signatures (lsblk needs udev to report them), the TUI
-on a real terminal with sudo's prompt.
+sudo prompt against real sudo (the tests run as root, so `sudo -S` is not exercised),
+real rsync progress in the TUI.

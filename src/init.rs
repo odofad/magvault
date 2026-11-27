@@ -50,7 +50,16 @@ fn path_conf(root: &Path) -> String {
 const MAGVAULT_CONF: &str = "format: magvault/1\n\
 # Non-path settings.\n\
 log_retention_days: 30\n\
-default_profile_320p: default-320p\n";
+default_profile_320p: default-320p\n\
+# DEBUG lines in the daily logs (yes|no); --verbose / --debug turn it on for one run.\n\
+debug: no\n";
+
+const CLIENT_MAGVAULT_CONF: &str = "format: magvault/1\n\
+# Client settings.\n\
+# DEBUG lines in the daily logs (yes|no); --verbose / --debug turn it on for one run.\n\
+debug: no\n\
+# Seconds ingest and sync wait for a server whose committer (magvault serve) is down.\n\
+committer_wait: 120\n";
 
 pub fn run(dir: &Path, root: Option<&Path>, write_pointer: bool) -> Result<Done> {
     let dir = if dir.is_absolute() { dir.to_path_buf() } else { std::env::current_dir()?.join(dir) };
@@ -157,6 +166,11 @@ pub fn run_client(
         };
         atomic_write(&pc, client_path_conf(&root, server).as_bytes())?;
         created.push(pc);
+    }
+    let mc = dir.join("magvault.conf");
+    if !mc.exists() {
+        atomic_write(&mc, CLIENT_MAGVAULT_CONF.as_bytes())?;
+        created.push(mc);
     }
     let cc = crate::config::load_client(&dir)?;
     crate::config::check_not_tmp("staging", &cc.staging)?;

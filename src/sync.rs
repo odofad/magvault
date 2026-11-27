@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 /// Verify a local mag copy, upload it, commit, and wait for the server's confirmation.
 pub fn send(t: &Transport, cc: &ClientConfig, mag_dir: &Path, folder: &str) -> Result<()> {
+    t.wait_ready(cc.committer_wait, "sync")?;
     let text = std::fs::read_to_string(mag_dir.join(magcard::FILE_NAME))
         .ctx(format!("{folder} has no readable magcard.txt"))?;
     let card = MagCard::parse(&text).map_err(|e| Error(format!("{folder}: magcard.txt: {e}")))?;
@@ -42,7 +43,7 @@ pub fn send(t: &Transport, cc: &ClientConfig, mag_dir: &Path, folder: &str) -> R
     let r = (|| -> Result<()> {
         t.upload(mag_dir, &refs, folder, &list)?;
         t.commit(folder)?;
-        t.wait_committed(folder)
+        t.wait_committed(folder, cc.committer_wait)
     })();
     let _ = std::fs::remove_file(&list);
     r
@@ -64,6 +65,8 @@ pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -
             e.0
         ))
     })?;
+    // A committer that stays down ends the whole sync (each mag would wait again).
+    let mut committer_down = false;
     interrupt::install();
     let mut rep = Report {
         synced: 0,
@@ -82,11 +85,11 @@ pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -
         .unwrap_or_default();
     staged.sort();
     for folder in staged {
-        if interrupt::requested() {
+        if interrupt::requested() || committer_down {
             break;
         }
         let dir = cc.staging.join(&folder);
-        eprintln!("sync {folder} (local staging) …");
+        crate::say!("sync {folder} (local staging) …");
         match send(&t, cc, &dir, &folder) {
             Ok(()) => {
                 std::fs::remove_dir_all(&dir).ctx("autoclean of local staging")?;
@@ -94,10 +97,13 @@ pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -
                     "sync",
                     &format!("Mag {folder} committed on the server; removed from local staging"),
                 );
-                println!("synced    {folder}  (local staging, cleaned)");
+                crate::out!("synced    {folder}  (local staging, cleaned)");
                 rep.synced += 1;
             }
-            Err(e) => fail(&log, &mut rep, &folder, &e),
+            Err(e) => {
+                committer_down = e.0.contains(crate::client::COMMITTER_DOWN);
+                fail(&log, &mut rep, &folder, &e)
+            }
         }
     }
 
@@ -115,7 +121,7 @@ pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -
                 SetStatus::Incomplete(r) | SetStatus::Inconsistent(r) => r.clone(),
                 SetStatus::Valid => String::new(),
             };
-            println!(
+            crate::out!(
                 "waiting   set {}: {} pending mag(s), not synced: {why} (mount both drives)",
                 set.label,
                 pending.len()
@@ -125,10 +131,10 @@ pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -
         }
         let master = set.roots()?.0.to_path_buf();
         for folder in pending {
-            if interrupt::requested() {
+            if interrupt::requested() || committer_down {
                 break;
             }
-            eprintln!("sync {folder} (field set {}) …", set.label);
+            crate::say!("sync {folder} (field set {}) …", set.label);
             match send(&t, cc, &master.join(&folder), &folder) {
                 Ok(()) => {
                     fieldset::mark_synced(&mut set, &folder)?;
@@ -139,10 +145,13 @@ pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -
                             set.label
                         ),
                     );
-                    println!("synced    {folder}  (field set {})", set.label);
+                    crate::out!("synced    {folder}  (field set {})", set.label);
                     rep.synced += 1;
                 }
-                Err(e) => fail(&log, &mut rep, &folder, &e),
+                Err(e) => {
+                    committer_down = e.0.contains(crate::client::COMMITTER_DOWN);
+                    fail(&log, &mut rep, &folder, &e)
+                }
             }
         }
     }
@@ -150,7 +159,13 @@ pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -
 }
 
 fn fail(log: &Log, rep: &mut Report, folder: &str, e: &Error) {
-    println!(
+    if !interrupt::requested() {
+        crate::client::queue_issue(
+            crate::log::Level::Error,
+            &format!("sync: Mag {folder} failed, stays pending: {}", e.0.lines().next().unwrap_or("")),
+        );
+    }
+    crate::out!(
         "FAILED    {folder}  {}",
         esc(e.0.lines().next().unwrap_or(""))
     );

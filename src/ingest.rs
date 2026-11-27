@@ -185,7 +185,7 @@ pub fn check_source(source: &Path, roots: &[&Path]) -> Result<PathBuf> {
 pub fn load_cameras_logged(dir: &Path, log: &Log) -> Vec<CameraProfile> {
     let cams = profiles::load_cameras(dir);
     for (p, e) in &cams.invalid {
-        eprintln!("warning: camera profile {} ignored: {e}", p.display());
+        crate::say!("warning: camera profile {} ignored: {e}", p.display());
         log.warn(
             "ingest",
             &format!("camera profile {} ignored: {e}", p.display()),
@@ -195,10 +195,10 @@ pub fn load_cameras_logged(dir: &Path, log: &Log) -> Vec<CameraProfile> {
 }
 
 pub fn probe_source(src: &Path) -> Result<Probe> {
-    eprintln!("probing {} …", esc(&src.display().to_string()));
+    crate::say!("probing {} …", esc(&src.display().to_string()));
     let use_ffprobe = probe::ffprobe_available();
     if !use_ffprobe {
-        eprintln!(
+        crate::say!(
             "warning: ffprobe not found; media details (duration, fps, size, audio) will be empty"
         );
     }
@@ -211,7 +211,7 @@ pub fn probe_source(src: &Path) -> Result<Probe> {
     }
     for c in &probe.clips {
         if let Some(e) = &c.info.probe_error {
-            eprintln!(
+            crate::say!(
                 "warning: ffprobe could not read {}: {}",
                 esc(&probe.files[c.file].rel),
                 esc(e)
@@ -290,9 +290,9 @@ pub fn print_summary(
         .iter()
         .filter(|f| f.role == Role::Sidecar)
         .count();
-    eprintln!();
-    eprintln!("  source      {}", esc(&src.display().to_string()));
-    eprintln!(
+    crate::say!();
+    crate::say!("  source      {}", esc(&src.display().to_string()));
+    crate::say!(
         "  files       {} ({} clips, {} sidecars, {} other) · {}",
         probe.files.len(),
         media_count,
@@ -302,27 +302,27 @@ pub fn print_summary(
     );
     let skipped: Vec<String> = probe.skipped.iter().map(|s| esc(s)).collect();
     if !skipped.is_empty() {
-        eprintln!(
+        crate::say!(
             "  skipped     {} junk item(s): {}",
             skipped.len(),
             skipped.join(", ")
         );
     }
     let guessed = |given: bool| if given { "" } else { "  (guessed)" };
-    eprintln!(
+    crate::say!(
         "  camera      {} [{}]{}",
         d.cam.name,
         d.cam.id,
         guessed(a.camera.is_some())
     );
-    eprintln!(
+    crate::say!(
         "  format      {}{}",
         d.file_format,
         guessed(a.format.is_some())
     );
-    eprintln!("  gamma       {}{}", d.gamma, guessed(a.gamma.is_some()));
-    eprintln!("  gamut       {}{}", d.gamut, guessed(a.gamut.is_some()));
-    eprintln!(
+    crate::say!("  gamma       {}{}", d.gamma, guessed(a.gamma.is_some()));
+    crate::say!("  gamut       {}{}", d.gamut, guessed(a.gamut.is_some()));
+    crate::say!(
         "  shoot day   {}{}",
         d.shoot_date,
         if d.shoot_src == "given" {
@@ -331,18 +331,19 @@ pub fn print_summary(
             format!("  (guessed: {})", d.shoot_src)
         }
     );
-    eprintln!("  project     {}", project.summary_line());
+    crate::say!("  project     {}", project.summary_line());
     if !d.notes.is_empty() {
-        eprintln!("  notes       {}", d.notes);
+        crate::say!("  notes       {}", d.notes);
     }
     for l in extra {
-        eprintln!("  {l}");
+        crate::say!("  {l}");
     }
-    eprintln!();
+    crate::say!();
 }
 
 /// First read of the card: SHA-256 (and C4) of every file (PLAN.md "Hashing").
 pub fn hash_source(probe: &Probe) -> Result<Vec<Hashed>> {
+    crate::log::dbg("hash", &format!("start SHA-256 + C4 of {} file(s), {}", probe.files.len(), human(probe.total_bytes)));
     let mut prog = Progress::new("hashing ", probe.total_bytes);
     let mut hashes: Vec<Hashed> = Vec::with_capacity(probe.files.len());
     for f in &probe.files {
@@ -366,6 +367,7 @@ pub fn hash_source(probe: &Probe) -> Result<Vec<Hashed>> {
         });
     }
     prog.finish();
+    crate::log::dbg("hash", &format!("end {} file(s) hashed", hashes.len()));
     Ok(hashes)
 }
 
@@ -490,7 +492,10 @@ pub fn rsync_to(
     } else {
         format!("{dest}/")
     };
-    eprintln!("copying with rsync → {}", esc(&dst_arg));
+    crate::say!("copying with rsync → {}", esc(&dst_arg));
+    let label = if extra.is_empty() { "copying" } else { "uploading" };
+    let started = std::time::Instant::now();
+    crate::log::dbg("rsync", &format!("start {label} {} file(s) → {}", rels.len(), esc(&dst_arg)));
     let mut child = Command::new("rsync")
         .arg("-t")
         .arg("--no-links")
@@ -504,8 +509,21 @@ pub fn rsync_to(
         .arg(&src_arg)
         .arg(&dst_arg)
         .env("LC_ALL", "C")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .ctx("cannot start rsync")?;
+    // rsync's progress (stdout) and messages (stderr) are passed on as they come: to the
+    // terminal on the command line, as progress and lines in the TUI.
+    let out_thread = child.stdout.take().map(|o| std::thread::spawn(move || relay_rsync_progress(o, label)));
+    let err_thread = child.stderr.take().map(|e| {
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(e).lines().map_while(|l| l.ok()) {
+                crate::say!("rsync: {line}");
+            }
+        })
+    });
     // Ctrl+C reaches rsync directly (same process group). A SIGTERM sent to Magvault
     // alone does not, so rsync is stopped here when a signal has been recorded.
     let status = loop {
@@ -514,10 +532,18 @@ pub fn rsync_to(
         }
         if interrupt::requested() {
             interrupt::stop_child(&mut child);
+            crate::log::dbg("rsync", "stopped by an interrupt");
             return Err(interrupt::error());
         }
         std::thread::sleep(Duration::from_millis(100));
     };
+    for t in [out_thread, err_thread].into_iter().flatten() {
+        let _ = t.join();
+    }
+    crate::log::dbg(
+        "rsync",
+        &format!("end {label} → {} ({status}, {:.1} s)", esc(&dst_arg), started.elapsed().as_secs_f64()),
+    );
     interrupt::check()?;
     if !status.success() {
         crate::bail!(
@@ -528,6 +554,45 @@ pub fn rsync_to(
         );
     }
     Ok(())
+}
+
+/// Pass rsync `--info=progress2` output on: raw to stdout on the command line; as progress
+/// (bytes, and the total worked out from the percentage) into the TUI.
+fn relay_rsync_progress(mut o: std::process::ChildStdout, label: &'static str) {
+    use std::io::{Read, Write};
+    let mut buf = [0u8; 4096];
+    let mut pending = String::new();
+    while let Ok(n) = o.read(&mut buf) {
+        if n == 0 {
+            break;
+        }
+        if !crate::out::active() {
+            let mut so = std::io::stdout();
+            let _ = so.write_all(&buf[..n]);
+            let _ = so.flush();
+            continue;
+        }
+        pending.push_str(&String::from_utf8_lossy(&buf[..n]));
+        while let Some(i) = pending.find(['\r', '\n']) {
+            let chunk: String = pending.drain(..=i).collect();
+            if let Some((done, total)) = parse_progress2(&chunk) {
+                crate::out::send(crate::out::Msg::Progress { label: label.into(), done, total });
+            }
+        }
+    }
+}
+
+/// `   1,234,567  45%   12.34MB/s    0:00:05 (xfr#3, to-chk=2/10)` → (bytes, total).
+///
+/// ```text
+/// parse_progress2("     1,000,000  50%  1.00MB/s  0:00:01") == Some((1_000_000, 2_000_000))
+/// ```
+pub fn parse_progress2(line: &str) -> Option<(u64, u64)> {
+    let mut it = line.split_whitespace();
+    let bytes: u64 = it.next()?.replace(',', "").parse().ok()?;
+    let pct: u64 = it.next()?.strip_suffix('%')?.parse().ok()?;
+    let total = if pct == 0 { bytes.max(1) * 100 } else { bytes * 100 / pct.min(100) };
+    Some((bytes, total.max(bytes)))
 }
 
 fn internal(rel: &str) -> bool {
@@ -541,6 +606,16 @@ fn internal(rel: &str) -> bool {
 /// exactly the expected files (Magvault's own `magcard.txt`, `ascmhl/`, `.magvault/` are
 /// allowed alongside), each with the expected size and SHA-256.
 pub fn verify_tree(dir: &Path, expected: &[(&str, u64, &str)], label: &str) -> Result<()> {
+    crate::log::dbg("verify", &format!("start {} {} file(s) in {}", label.trim(), expected.len(), esc(&dir.display().to_string())));
+    let r = verify_tree_inner(dir, expected, label);
+    crate::log::dbg(
+        "verify",
+        &format!("end {} {}: {}", label.trim(), esc(&dir.display().to_string()), if r.is_ok() { "ok" } else { "MISMATCH" }),
+    );
+    r
+}
+
+fn verify_tree_inner(dir: &Path, expected: &[(&str, u64, &str)], label: &str) -> Result<()> {
     let (copied, _) = probe::walk(dir).ctx("cannot list the copied files")?;
     let copied: Vec<_> = copied.into_iter().filter(|f| !internal(&f.rel)).collect();
     let want: BTreeMap<&str, (u64, &str)> =
@@ -747,6 +822,7 @@ pub fn commit_db(
             }
         }
         // Publish the folder, then commit. If the commit fails, take the folder back out.
+        crate::log::dbg("ingest", &format!("rename {} → {}", esc(&staging.display().to_string()), esc(&final_dir.display().to_string())));
         std::fs::rename(staging, final_dir).ctx(format!(
             "cannot move {} into {}",
             staging.display(),
@@ -783,7 +859,7 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
     let cams = load_cameras_logged(&cfg.paths.cameras, &log);
     let encs = profiles::load_encoders(&cfg.paths.encoders);
     for (p, e) in &encs.invalid {
-        eprintln!("warning: encoder profile {} ignored: {e}", p.display());
+        crate::say!("warning: encoder profile {} ignored: {e}", p.display());
     }
     let proxy_profile = resolve_320p_profile(cfg, &encs.profiles)?;
 
@@ -873,7 +949,7 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
                 );
             }
             if interrupt::requested() {
-                eprintln!("note: a stop signal arrived while the mag was being committed; the ingest completed");
+                crate::say!("note: a stop signal arrived while the mag was being committed; the ingest completed");
             }
             let mag_dir = cfg.paths.mags.join(&folder);
             Ok(Outcome {
@@ -993,9 +1069,9 @@ pub fn warn_stale_incoming(incoming: &Path, log: &Log) {
         incoming.display(),
         items.len()
     );
-    eprintln!("warning: {}", esc(&msg));
+    crate::say!("warning: {}", esc(&msg));
     for i in &items {
-        eprintln!("  {}", esc(i));
+        crate::say!("  {}", esc(i));
     }
     log.write(Level::Warn, "ingest", &msg, &items);
 }

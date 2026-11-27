@@ -17,6 +17,7 @@ mod ingest;
 mod init;
 mod interrupt;
 mod log;
+mod out;
 mod magcard;
 mod mhl;
 mod probe;
@@ -40,6 +41,8 @@ struct Cli {
     command: Option<String>,
     positional: Vec<String>,
     opts: Vec<(String, Option<String>)>,
+    /// --verbose / --debug: DEBUG lines for this run (PLAN.md "Debug logging").
+    debug: bool,
 }
 
 const FLAGS: &[&str] = &[
@@ -62,6 +65,7 @@ fn parse_cli() -> Result<Cli> {
         command: None,
         positional: Vec::new(),
         opts: Vec::new(),
+        debug: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -74,6 +78,10 @@ fn parse_cli() -> Result<Cli> {
                 Some((n, v)) => (n.to_string(), Some(v.to_string())),
                 None => (a.clone(), None),
             };
+            if (name == "--verbose" || name == "--debug") && inline.is_none() {
+                cli.debug = true;
+                continue;
+            }
             if FLAGS.contains(&name.as_str()) {
                 if inline.is_some() {
                     bail!("{name} does not take a value");
@@ -346,6 +354,8 @@ fn run() -> Result<ExitCode> {
 
 fn server_command(cmd: &str, mut cli: Cli, dir: &std::path::Path) -> Result<ExitCode> {
     let cfg = config::load(dir)?;
+    let debug = cli.debug || config::debug_setting(&cfg.settings, &cfg.dir.join("magvault.conf"))?;
+    log::configure(&cfg.paths.logs, debug);
     match cmd {
         "ingest" => {
             let mut a = base_args(&mut cli);
@@ -405,8 +415,17 @@ fn server_command(cmd: &str, mut cli: Cli, dir: &std::path::Path) -> Result<Exit
     }
 }
 
-fn client_command(cmd: &str, mut cli: Cli, dir: &std::path::Path) -> Result<ExitCode> {
+fn client_command(cmd: &str, cli: Cli, dir: &std::path::Path) -> Result<ExitCode> {
     let cc = config::load_client(dir)?;
+    log::configure(&cc.logs, cli.debug || cc.debug);
+    client::start_issues(&cc);
+    let r = client_command_inner(cmd, cli, &cc);
+    client::finish_issues(&cc);
+    r
+}
+
+fn client_command_inner(cmd: &str, mut cli: Cli, cc: &config::ClientConfig) -> Result<ExitCode> {
+    let cc = cc.clone();
     match cmd {
         "ingest" => {
             let mut base = base_args(&mut cli);

@@ -11,11 +11,34 @@ use crate::probe::{self, Role};
 use crate::profiles::{self, CameraProfile};
 use std::path::{Path, PathBuf};
 
+/// PLAN.md "Client ↔ server status": ready only when the committer answers.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ServerState {
     NotConfigured,
-    Online(String),
+    /// Gate up and `magvault serve` alive (host).
+    Ready(String),
+    /// Gate up, committer down (host, why).
+    CommitterDown(String, String),
+    /// Gate not reachable (host, why).
     Offline(String, String),
+}
+
+impl ServerState {
+    /// Short status for the operator.
+    pub fn plain(&self) -> &'static str {
+        match self {
+            ServerState::Ready(_) => "server ready",
+            ServerState::CommitterDown(..) => crate::client::COMMITTER_DOWN,
+            ServerState::Offline(..) => "server offline",
+            ServerState::NotConfigured => "no server configured",
+        }
+    }
+    pub fn host(&self) -> &str {
+        match self {
+            ServerState::Ready(h) | ServerState::CommitterDown(h, _) | ServerState::Offline(h, _) => h,
+            ServerState::NotConfigured => "",
+        }
+    }
 }
 
 /// A drive that is not part of a valid set.
@@ -55,8 +78,9 @@ impl Snapshot {
             activity: Vec::new(),
         }
     }
-    pub fn online(&self) -> bool {
-        matches!(self.server, ServerState::Online(_))
+    /// The server can commit now.
+    pub fn ready(&self) -> bool {
+        matches!(self.server, ServerState::Ready(_))
     }
 }
 
@@ -78,11 +102,12 @@ pub fn gather(cc: &ClientConfig, scan_roots: &[PathBuf]) -> Snapshot {
     let server = match &t {
         None => ServerState::NotConfigured,
         Some(t) => match t.ping() {
-            Ok(()) => ServerState::Online(t.describe()),
+            Ok(crate::client::ServerStatus::Ready) => ServerState::Ready(t.describe()),
+            Ok(crate::client::ServerStatus::CommitterDown(why)) => ServerState::CommitterDown(t.describe(), why),
             Err(e) => ServerState::Offline(t.describe(), e.0.lines().next().unwrap_or("").to_string()),
         },
     };
-    let online = matches!(server, ServerState::Online(_));
+    let online = matches!(server, ServerState::Ready(_) | ServerState::CommitterDown(..));
     let projects = client::projects(cc, if online { t.as_ref() } else { None });
     let cameras = profiles::load_cameras(&cc.cameras).profiles;
     let cards = discover::find_cards(&discover::volumes(scan_roots), &cameras);

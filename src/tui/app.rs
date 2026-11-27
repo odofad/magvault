@@ -4,7 +4,9 @@
 //!
 //! Keys follow PLAN.md "Shared key convention": Esc back to the dashboard (or closes a
 //! popup), q quits only on the dashboard, Tab / Shift+Tab panes, arrows move, Enter
-//! selects. Ingest letters: n new project, r rescan, p pull, o Prepare, c Clean.
+//! selects. Ingest letters: n new project, r rescan, p pull, o Prepare, c Clean. Both
+//! screens: y sync pending mags, d show / hide technical details (paths, UUIDs, devices).
+//! While a step runs (pull, sync, Prepare, Clean) only Ctrl-C (cancel) and d work.
 
 use super::data::{DriveRow, Preview, ServerState, Snapshot};
 use crate::client_ingest::{ClientArgs, Via};
@@ -14,6 +16,52 @@ use crate::profiles::CameraProfile;
 use crate::util::human;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
+
+/// The sudo password on its way from the prompt to `sudo -S`; never printed.
+#[derive(Clone)]
+pub struct Secret(pub String);
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(***)")
+    }
+}
+
+/// A step that needs sudo, waiting for the password prompt.
+#[derive(Debug, Clone)]
+pub enum SudoOp {
+    PrepareMaster { disk: Disk, label: String },
+    PrepareSlave { disk: Disk, label: String },
+    Clean { label: String },
+}
+
+impl SudoOp {
+    fn what(&self) -> String {
+        match self {
+            SudoOp::PrepareMaster { label, .. } => format!("Prepare master of {label}"),
+            SudoOp::PrepareSlave { label, .. } => format!("Prepare slave of {label}"),
+            SudoOp::Clean { label } => format!("Clean {label}"),
+        }
+    }
+    fn into_action(self, password: Option<Secret>) -> Action {
+        match self {
+            SudoOp::PrepareMaster { disk, label } => Action::PrepareMaster { disk, label, password },
+            SudoOp::PrepareSlave { disk, label } => Action::PrepareSlave { disk, label, password },
+            SudoOp::Clean { label } => Action::Clean { label, password },
+        }
+    }
+}
+
+/// A running step (pull, sync, Prepare, Clean): progress and the lines it printed.
+#[derive(Debug, Clone, Default)]
+pub struct Job {
+    pub title: String,
+    pub stage: String,
+    pub done: u64,
+    pub total: u64,
+    pub lines: Vec<String>,
+    pub cancelling: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -87,6 +135,8 @@ pub enum Popup {
     Picker { field: Field, items: Vec<String>, sel: usize },
     Input { kind: InputKind, text: String },
     Message(Vec<String>),
+    /// Sudo password for a Prepare / Clean step (shown as dots).
+    Password { op: SudoOp, text: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,9 +159,14 @@ pub enum Action {
     Refresh,
     Probe(PathBuf),
     Pull(Box<ClientArgs>),
-    PrepareMaster { disk: Disk, label: String },
-    PrepareSlave { disk: Disk, label: String },
-    Clean { label: String },
+    Sync,
+    PrepareMaster { disk: Disk, label: String, password: Option<Secret> },
+    PrepareSlave { disk: Disk, label: String, password: Option<Secret> },
+    Clean { label: String, password: Option<Secret> },
+    /// Ctrl-C while a step runs: stop it (nothing committed / written).
+    Cancel,
+    /// The operator cancelled a sudo prompt (logged; reported to the server log).
+    SudoCancelled(String),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -152,6 +207,12 @@ pub struct App {
     pub log: Vec<String>,
     /// The Prepare popup while its set label is being edited.
     pub prepare_stash: Option<Popup>,
+    /// The step running in the background, if any.
+    pub job: Option<Job>,
+    /// d: show paths, UUIDs and device names.
+    pub show_tech: bool,
+    /// Prepare / Clean need the sudo password (not when running as root).
+    pub needs_sudo: bool,
 }
 
 pub const MENU: [(char, &str); 4] = [('i', "Ingest"), ('g', "Logging"), ('l', "Library"), ('s', "Server dashboard")];
@@ -182,6 +243,51 @@ impl App {
             use_set: None,
             log: Vec::new(),
             prepare_stash: None,
+            job: None,
+            show_tech: false,
+            needs_sudo: true,
+        }
+    }
+
+    // ---- running steps -----------------------------------------------------------------
+
+    pub fn start_job(&mut self, title: &str) {
+        self.job = Some(Job { title: title.to_string(), stage: "starting".into(), ..Default::default() });
+    }
+
+    pub fn job_msg(&mut self, m: crate::out::Msg) {
+        match m {
+            crate::out::Msg::Line { text, .. } => {
+                if text.trim().is_empty() {
+                    return;
+                }
+                if let Some(j) = &mut self.job {
+                    j.lines.push(text.clone());
+                    if j.lines.len() > 200 {
+                        j.lines.remove(0);
+                    }
+                }
+                self.log(text);
+            }
+            crate::out::Msg::Progress { label, done, total } => {
+                if let Some(j) = &mut self.job {
+                    j.stage = label;
+                    j.done = done;
+                    j.total = total;
+                }
+            }
+        }
+    }
+
+    /// The step ended: one line in the log, a message on failure. Stays on the TUI.
+    pub fn job_done(&mut self, r: std::result::Result<String, String>) {
+        let title = self.job.take().map(|j| j.title).unwrap_or_default();
+        match r {
+            Ok(summary) => self.log(format!("done            {title}: {summary}")),
+            Err(e) => {
+                self.log(format!("failed          {title}: {}", e.lines().next().unwrap_or("")));
+                self.popup = Some(Popup::Message(vec![format!("{title} failed:"), e]));
+            }
         }
     }
 
@@ -302,7 +408,7 @@ impl App {
         if self.use_set.is_some() {
             return None;
         }
-        if self.use_server && self.snap.online() {
+        if self.use_server && self.snap.ready() {
             Some("No field backup selected: keep the card until the server confirms.".into())
         } else {
             Some("No backup and server sync not confirmed: keep the card until `magvault sync` succeeds.".into())
@@ -329,7 +435,7 @@ impl App {
         }
         match self.route() {
             Err(e) => m.push(e),
-            Ok((Via::Direct, _)) if !self.snap.online() => m.push("server reachable (direct needs it)".into()),
+            Ok((Via::Direct, _)) if !self.snap.ready() => m.push("server ready (direct needs it)".into()),
             _ => {}
         }
         m
@@ -370,11 +476,36 @@ impl App {
     // ---- keys --------------------------------------------------------------------------
 
     pub fn on_key(&mut self, k: KeyEvent) -> Option<Action> {
-        if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
+        let ctrl_c = k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c');
+        if let Some(j) = &mut self.job {
+            // A step is running: Ctrl-C stops it, d toggles details, nothing else.
+            if ctrl_c && !j.cancelling {
+                j.cancelling = true;
+                return Some(Action::Cancel);
+            }
+            if k.code == KeyCode::Char('d') {
+                self.show_tech = !self.show_tech;
+            }
+            return None;
+        }
+        if let Some(Popup::Password { .. }) = &self.popup {
+            return self.password_key(k, ctrl_c);
+        }
+        if ctrl_c {
             return Some(Action::Quit);
         }
         if self.popup.is_some() {
             return self.popup_key(k);
+        }
+        if matches!(self.screen, Screen::Dashboard | Screen::Ingest) {
+            match k.code {
+                KeyCode::Char('d') => {
+                    self.show_tech = !self.show_tech;
+                    return None;
+                }
+                KeyCode::Char('y') => return self.sync_key(),
+                _ => {}
+            }
         }
         match self.screen {
             Screen::Dashboard => self.dashboard_key(k),
@@ -386,6 +517,63 @@ impl App {
             }
             Screen::Ingest => self.ingest_key(k),
         }
+    }
+
+    fn password_key(&mut self, k: KeyEvent, ctrl_c: bool) -> Option<Action> {
+        let Some(Popup::Password { op, mut text }) = self.popup.take() else { return None };
+        match k.code {
+            _ if ctrl_c => {}
+            KeyCode::Esc => {}
+            KeyCode::Enter => {
+                return Some(op.into_action(Some(Secret(text))));
+            }
+            KeyCode::Backspace => {
+                text.pop();
+                self.popup = Some(Popup::Password { op, text });
+                return None;
+            }
+            KeyCode::Char(c) if !c.is_control() => {
+                text.push(c);
+                self.popup = Some(Popup::Password { op, text });
+                return None;
+            }
+            _ => {
+                self.popup = Some(Popup::Password { op, text });
+                return None;
+            }
+        }
+        // Esc / Ctrl-C: cancelled before anything was written.
+        let what = op.what();
+        self.log(format!("sudo cancelled  {what}; nothing written"));
+        Some(Action::SudoCancelled(what))
+    }
+
+    /// A Prepare / Clean step confirmed: ask for the sudo password first (not as root).
+    fn sudo_step(&mut self, op: SudoOp) -> Option<Action> {
+        if self.needs_sudo {
+            self.popup = Some(Popup::Password { op, text: String::new() });
+            None
+        } else {
+            Some(op.into_action(None))
+        }
+    }
+
+    fn sync_key(&mut self) -> Option<Action> {
+        let pending = self.snap.staging_pending.len() + self.snap.sets.iter().map(|s| s.pending().len()).sum::<usize>();
+        if self.snap.server == ServerState::NotConfigured {
+            self.popup = Some(Popup::Message(vec!["No server is configured; mags stay pending here.".into()]));
+            None
+        } else if pending == 0 {
+            self.popup = Some(Popup::Message(vec!["Nothing to sync: no mag is waiting for the server.".into()]));
+            None
+        } else {
+            Some(Action::Sync)
+        }
+    }
+
+    /// Mags waiting for the server (staging + field sets).
+    pub fn pending_total(&self) -> usize {
+        self.snap.staging_pending.len() + self.snap.sets.iter().map(|s| s.pending().len()).sum::<usize>()
     }
 
     fn open_module(&mut self, c: char) -> Option<Action> {
@@ -702,6 +890,7 @@ impl App {
         let popup = self.popup.take().expect("popup");
         match popup {
             Popup::Message(_) => None, // any key closes
+            Popup::Password { .. } => None,   // handled in password_key
             Popup::Input { kind, mut text } => {
                 match k.code {
                     KeyCode::Esc => {}
@@ -748,7 +937,7 @@ impl App {
                     self.log(format!("clean cancelled {label}; nothing deleted"));
                     None
                 }
-                KeyCode::Enter => Some(Action::Clean { label }),
+                KeyCode::Enter => self.sudo_step(SudoOp::Clean { label }),
                 _ => {
                     self.popup = Some(Popup::Clean { label, mags });
                     None
@@ -771,6 +960,10 @@ impl App {
                         p.sel = (p.sel + 1).min(rows.len().saturating_sub(1));
                         self.popup = Some(Popup::Prepare(p));
                         self.update_prepare_note();
+                    }
+                    KeyCode::Char('d') => {
+                        self.show_tech = !self.show_tech;
+                        self.popup = Some(Popup::Prepare(p));
                     }
                     KeyCode::Char('e') if p.confirm && p.step == PrepStep::Master => {
                         let text = p.label.clone();
@@ -803,11 +996,12 @@ impl App {
                             }
                             return None;
                         }
-                        // Confirmed: the runtime leaves the screen for sudo's own prompt.
-                        return Some(match &p.step {
-                            PrepStep::Master => Action::PrepareMaster { disk, label: p.label.clone() },
-                            PrepStep::Slave { label, .. } => Action::PrepareSlave { disk, label: label.clone() },
-                        });
+                        // Confirmed: the sudo password next (in the TUI), then the step runs.
+                        let op = match &p.step {
+                            PrepStep::Master => SudoOp::PrepareMaster { disk, label: p.label.clone() },
+                            PrepStep::Slave { label, .. } => SudoOp::PrepareSlave { disk, label: label.clone() },
+                        };
+                        return self.sudo_step(op);
                     }
                     _ => self.popup = Some(Popup::Prepare(p)),
                 }

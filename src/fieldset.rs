@@ -508,6 +508,8 @@ pub struct Disk {
     pub path: String,
     pub size: u64,
     pub label: String,
+    /// lsblk MODEL (for the operator: "ST320LM010" instead of /dev/sda).
+    pub model: String,
     pub mounts: Vec<PathBuf>,
     pub backup: Option<BackupFile>,
 }
@@ -663,7 +665,7 @@ pub fn classify_disks(text: &str, allow_loop: bool, is_camera: &dyn Fn(&Path) ->
             .cloned()
             .unwrap_or_default();
         out.push(Candidate {
-            disk: Ok(Disk { path: path.clone(), size, label, mounts, backup }),
+            disk: Ok(Disk { path: path.clone(), size, label, model: g("MODEL").trim().to_string(), mounts, backup }),
             path,
         });
     }
@@ -695,22 +697,57 @@ pub fn is_root() -> bool {
 /// Run the root helper: directly when already root, else `sudo -k <helper> …` (sudo asks
 /// for the password on the terminal; `-k` so it is asked every time, PLAN.md "Sudo helper").
 /// Returns the helper's stdout.
+/// The sudo password the TUI asked for, handed to `sudo -S` for the next helper call and
+/// then forgotten. Never logged, never written anywhere.
+static SUDO_PASSWORD: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn set_sudo_password(pw: Option<String>) {
+    *SUDO_PASSWORD.lock().unwrap() = pw;
+}
+
 pub fn run_helper(helper: &Path, args: &[&str]) -> Result<String> {
+    // The helper arguments are device / label / mount paths: fine for the DEBUG log.
+    crate::log::dbg("helper", &format!("{} {}{}", helper.display(), args.join(" "), if is_root() { "" } else { " (via sudo)" }));
+    // TUI: no terminal to prompt on. sudo reads the password from stdin (-S, no prompt
+    // text) and the helper's messages come back as lines.
+    let tui = crate::out::active();
+    let password = if tui && !is_root() { SUDO_PASSWORD.lock().unwrap().take() } else { None };
+    if tui && !is_root() && password.is_none() {
+        crate::bail!("sudo needs the password; nothing was written");
+    }
     let mut cmd = if is_root() {
         Command::new(helper)
     } else {
         let mut c = Command::new("sudo");
-        c.arg("-k").arg(helper);
+        c.arg("-k");
+        if password.is_some() {
+            c.args(["-S", "-p", ""]);
+        }
+        c.arg(helper);
         c
     };
-    let out = cmd
-        .args(args)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .output()
-        .ctx(format!("cannot run {}", helper.display()))?;
+    cmd.args(args).stdout(Stdio::piped());
+    if tui {
+        cmd.stdin(if password.is_some() { Stdio::piped() } else { Stdio::null() }).stderr(Stdio::piped());
+    } else {
+        cmd.stdin(Stdio::inherit()).stderr(Stdio::inherit());
+    }
+    let mut child = cmd.spawn().ctx(format!("cannot run {}", helper.display()))?;
+    if let (Some(pw), Some(mut stdin)) = (password, child.stdin.take()) {
+        use std::io::Write;
+        let _ = stdin.write_all(pw.as_bytes());
+        let _ = stdin.write_all(b"\n");
+    }
+    let out = child.wait_with_output().ctx(format!("cannot run {}", helper.display()))?;
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    for l in stderr.lines().filter(|l| !l.trim().is_empty()) {
+        crate::say!("{l}");
+    }
+    crate::log::dbg("helper", &format!("{} → {}", args.first().unwrap_or(&""), out.status));
     if !out.status.success() {
+        if stderr.contains("incorrect password") || stderr.contains("Sorry, try again") || stderr.contains("no password was provided") {
+            crate::bail!("sudo did not accept the password; nothing was written");
+        }
         crate::bail!(
             "{} {} did not run (sudo password not accepted, or the helper refused; see the message above)",
             helper.display(),
