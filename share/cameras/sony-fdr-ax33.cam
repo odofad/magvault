@@ -1,0 +1,23 @@
+# Magvault camera profile
+name: Sony FDR-AX33
+id: sony-fdr-ax33
+
+vendor: Sony
+model: FDR-AX33
+card_layout: PRIVATE, DCIM
+filename_pattern: *.MP4, *.MTS
+
+file_formats: XAVC S 4K, XAVC S HD, AVCHD, MP4
+default_format: XAVC S 4K
+
+gamma: Rec.709
+default_gamma: Rec.709
+
+gamut: Rec.709
+default_gamut: Rec.709
+
+typical_resolutions: 3840x2160, 1920x1080, 1440x1080, 1280x720
+typical_fps: 24, 25, 30, 50, 60
+audio_channels: 2, 6
+
+notes: 4K Handycam. XAVC S (MP4) and AVCHD (MTS). No S-Log. Not FDR-AX3.
