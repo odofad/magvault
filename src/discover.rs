@@ -533,8 +533,14 @@ mod tests {
 
         let cams: Vec<CameraProfile> = [
             include_str!("../share/cameras/generic-avchd.cam"),
+            include_str!("../share/cameras/panasonic-ag-cx350.cam"),
             include_str!("../share/cameras/sony-a7siii.cam"),
             include_str!("../share/cameras/sony-fdr-ax33.cam"),
+            include_str!("../share/cameras/sony-fdr-ax53.cam"),
+            include_str!("../share/cameras/sony-ilce-7m3.cam"),
+            include_str!("../share/cameras/sony-ilme-fx6.cam"),
+            include_str!("../share/cameras/sony-pxw-fs5.cam"),
+            include_str!("../share/cameras/sony-pxw-fs7.cam"),
             include_str!("../share/cameras/sony-vg20.cam"),
         ]
         .iter()
