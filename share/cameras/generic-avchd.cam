@@ -1,0 +1,23 @@
+# Magvault camera profile
+name: Generic AVCHD
+id: generic-avchd
+
+vendor: Generic
+model: AVCHD
+card_layout: PRIVATE
+filename_pattern: *.MTS
+
+file_formats: AVCHD
+default_format: AVCHD
+
+gamma: Rec.709
+default_gamma: Rec.709
+
+gamut: Rec.709
+default_gamut: Rec.709
+
+typical_resolutions: 1920x1080, 1440x1080
+typical_fps: 24, 25, 30, 50, 60
+audio_channels: 2, 6
+
+notes: Fallback when a card is AVCHD-family and no specific model matches. Must not outrank a profile that matches live-media model metadata. Operator confirms.
