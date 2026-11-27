@@ -1,0 +1,23 @@
+# Magvault camera profile
+name: Panasonic AG-CX350
+id: panasonic-ag-cx350
+
+vendor: Panasonic
+model: AG-CX350
+card_layout: CONTENTS, PRIVATE/PANA_GRP, PRIVATE/AVCHD
+filename_pattern: *.MXF, *.MOV, *.MTS
+
+file_formats: P2, MOV, AVCHD
+default_format: MOV
+
+gamma: Rec.709
+default_gamma: Rec.709
+
+gamut: Rec.709
+default_gamut: Rec.709
+
+typical_resolutions: 3840x2160, 1920x1080
+typical_fps: 24, 25, 30, 50, 60
+audio_channels: 2, 4
+
+notes: Model may appear as AG-CX350 in MOV XML or CX350 in P2 XML. Same body.

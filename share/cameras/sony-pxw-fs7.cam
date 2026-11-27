@@ -1,0 +1,23 @@
+# Magvault camera profile
+name: Sony PXW-FS7
+id: sony-pxw-fs7
+
+vendor: Sony
+model: PXW-FS7
+card_layout: XDROOT
+filename_pattern: A###C###_*.MXF
+
+file_formats: XAVC
+default_format: XAVC
+
+gamma: Rec.709, S-Log3
+default_gamma: Rec.709
+
+gamut: Rec.709, S-Gamut3.Cine
+default_gamut: Rec.709
+
+typical_resolutions: 3840x2160, 1920x1080
+typical_fps: 24, 25, 30, 50, 60
+audio_channels: 4
+
+notes: Top-level XDROOT. Split from FX6 by filename or model string. systemKind may append ver.x.

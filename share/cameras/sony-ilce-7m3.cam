@@ -1,0 +1,23 @@
+# Magvault camera profile
+name: Sony A7 III
+id: sony-ilce-7m3
+
+vendor: Sony
+model: ILCE-7M3
+card_layout: PRIVATE/M4ROOT
+filename_pattern: C????.MP4
+
+file_formats: XAVC S 4K, XAVC S HD
+default_format: XAVC S HD
+
+gamma: Rec.709, S-Log2, S-Log3
+default_gamma: Rec.709
+
+gamut: Rec.709, S-Gamut3.Cine
+default_gamut: Rec.709
+
+typical_resolutions: 3840x2160, 1920x1080
+typical_fps: 24, 25, 30, 50, 60
+audio_channels: 2
+
+notes: Same layout as FDR-AX53. Model string ILCE-7M3 splits them. Layout alone cannot.

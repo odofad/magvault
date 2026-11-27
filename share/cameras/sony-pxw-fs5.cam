@@ -1,0 +1,23 @@
+# Magvault camera profile
+name: Sony PXW-FS5
+id: sony-pxw-fs5
+
+vendor: Sony
+model: PXW-FS5
+card_layout: PRIVATE/XDROOT, PRIVATE/AVCHD
+filename_pattern: Clip????.MXF, *.MTS
+
+file_formats: XAVC QFHD, XAVC HD, AVCHD
+default_format: XAVC HD
+
+gamma: Rec.709, S-Log2
+default_gamma: Rec.709
+
+gamut: Rec.709, S-Gamut
+default_gamut: Rec.709
+
+typical_resolutions: 3840x2160, 1920x1080
+typical_fps: 25, 50
+audio_channels: 4
+
+notes: systemKind may append ver.x. Empty M4ROOT must not steal the layout.
