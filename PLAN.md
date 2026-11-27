@@ -580,6 +580,15 @@ Applies to all fields: camera, format, gamma, gamut, project assignment, manifes
 Per-file shot logging is not part of ingest.
 
 
+
+## Time display
+
+- Always 24-hour clock.
+- Date format DD/MM/YYYY.
+- Both can be set in config. Defaults are 24-hour and DD/MM/YYYY.
+- Ingest has a system-time block (wall clock).
+- Block 2 shows the shoot date and the clip time range (e.g. 11:30 – 15:43), not a file list.
+
 ## Client staging cache
 
 Local staging on the client is a temporary holding area between the card and confirmed backups.
