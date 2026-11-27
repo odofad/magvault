@@ -236,7 +236,7 @@ The client dashboard has a Job card page. The field operator loads it to see wha
 
 - Operator selects an open project.
 - The page shows the fixed values: frame rate, resolution, GOP.
-- Read-only on the client. Requirements are set by the producer at project creation on the server.
+- Read-only for normal keys. A producer key can create a project and set requirements from the client. The server admin can also create projects.
 - If a project has no requirements, the page says so.
 
 ### Accountability
@@ -471,7 +471,7 @@ Files on disk remain the source of truth. The module reloads the relevant folder
 Magvault has no internal user database. Access is the system user plus SSH keys.
 
 - **Server user** (`magvault`): admin. Can open the Profile Editor and any other admin-only module. Runs the server process.
-- **Client user** (`magvaultclient`): shared username for all clients. Each client is identified by its own unique SSH key. Can use Ingest, Logging, Dashboard, Encoder, etc. Cannot open admin-only modules unless the key is marked producer.
+- **Client user** (`magvaultclient`): shared username for all clients. Each client is identified by its own unique SSH key. Can use Ingest, Logging, Dashboard, Encoder, etc. Cannot open admin-only modules. A producer key can create projects; it does not open admin modules.
 
 **Producer key** (optional)
 - Most clients use a normal key. They cannot create projects.
