@@ -1007,6 +1007,18 @@ Operational client problems are also written to the server daily log, for debug 
 - Rate-limited so a stuck client cannot flood the log.
 - The client still writes its own local log.
 
+
+## Internal modules
+
+Magvault is extended by modules we build. There are no third-party plugins.
+
+- Each module is Rust in this repo (`src/<module>/` or a crate) with a fixed shape: name, keys, draw, on_key, cli command.
+- Modules are compiled into the same binary. No dynamic `.so` loading. No WASM. No external plugin directory.
+- A module may use only the shared services: config, database, log, gate, rsync, sudo helper.
+- It must not write outside its configured roots.
+- The dashboard menu lists enabled modules. Core (dashboard, ingest) is always present.
+- Later phases (encoder, library, logging, zmag, settings, keys) are modules in this sense. They are not plugins.
+
 ## CLI and scripting
 
 Magvault is terminal-first. It is not an API. There is no HTTP service and no client library.
