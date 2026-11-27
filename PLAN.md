@@ -235,7 +235,9 @@ A mag can be soft-locked once it has been used on a production. Soft lock does n
 
 
 
-### Job card (client)
+### Job card (client) — deferred
+
+Deferred to the producer console phase. Not Phase 1.
 
 The client dashboard has a Job card page. The field operator loads it to see what the producer required before setting up gear.
 
@@ -489,7 +491,7 @@ Magvault has no internal user database. Access is the system user plus SSH keys.
 - **Server user** (`magvault`): admin. Can open the Profile Editor and any other admin-only module. Runs the server process.
 - **Client user** (`magvaultclient`): shared username for all clients. Each client is identified by its own unique SSH key. Can use Ingest, Logging, Dashboard, Encoder, etc. Cannot open admin-only modules. A producer key can create projects; it does not open admin modules.
 
-**Producer key** (optional)
+**Producer key** (optional) — deferred to the producer console phase. Not Phase 1.
 - Most clients use a normal key. They cannot create projects.
 - A key can be marked `producer: yes` in the Key module.
 - This is not sudo. It does not grant ZFS, Prepare, or any root helper rights.
@@ -600,7 +602,8 @@ Status comes from hashes / mag identity, not from the volume label.
 ## Help and log keys
 
 - F1: help for the current screen.
-- F2: log for the current card or action. On the card screen this shows what is wrong with the card (probe errors, junk, requirement mismatch, previous dump state).
+- F2: deferred. Not in this batch. Revisit when the Logs module is real.
+- F1: help for the current screen. In this batch.
 
 ## Client ingest and field backups
 
@@ -745,6 +748,8 @@ The dashboard is the first screen after launch. It shows status and is the way t
 Both versions are ratatui. Esc/q returns to the dashboard from any module. Keyboard first (arrows + Enter or single-letter shortcuts). Mouse optional.
 
 ## Shared key convention (terminal)
+
+Left / Right move between panes (same as Tab). Up / Down select the item in the current pane.
 
 One set of navigation keys for every screen. Defined once so modules stay consistent.
 
