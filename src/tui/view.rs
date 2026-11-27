@@ -453,8 +453,14 @@ fn ingest(f: &mut Frame, area: Rect, app: &App) {
         format!("{}   {}", d.shoot_date, if d.shoot_edited { "given" } else { "guessed" })
     };
     let notes = if d.notes.is_empty() { "(optional)".to_string() } else { d.notes.clone() };
-    let vals = [cam, d.format.clone(), d.gamma.clone(), d.gamut.clone(), shoot, notes];
-    let names = ["Camera", "Format", "Gamma", "Gamut", "Shoot day", "Notes"];
+    let model = match (&d.model, &d.model_hint) {
+        (Some(m), _) => format!("{m}  (yours)"),
+        (None, Some(h)) if tech => h.clone(),
+        (None, Some(h)) => format!("{} (from card)", h.split(" (").next().unwrap_or(h)),
+        (None, None) => "(not on the card)".to_string(),
+    };
+    let vals = [cam, d.format.clone(), d.gamma.clone(), d.gamut.clone(), shoot, notes, model];
+    let names = ["Camera", "Format", "Gamma", "Gamut", "Shoot day", "Notes", "Model"];
     let mut l = vec![Line::raw("")];
     for i in 0..FIELDS.len() {
         let v = if vals[i].is_empty() { "-".to_string() } else { vals[i].clone() };
@@ -640,6 +646,7 @@ fn popup(f: &mut Frame, area: Rect, app: &App, p: &Popup) {
                 InputKind::ShootDate => "Shoot day (YYYY-MM-DD)",
                 InputKind::Notes => "Mag notes (optional)",
                 InputKind::SetLabel => "Set label (A-Z, 0-9, '-', up to 12)",
+                InputKind::Model => "Camera model as you name it (empty = keep what the card says)",
             };
             let l = vec![
                 Line::raw(""),

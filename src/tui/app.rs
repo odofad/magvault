@@ -96,9 +96,11 @@ pub enum Field {
     Gamut,
     ShootDate,
     Notes,
+    Model,
 }
 
-pub const FIELDS: [Field; 6] = [Field::Camera, Field::Format, Field::Gamma, Field::Gamut, Field::ShootDate, Field::Notes];
+pub const FIELDS: [Field; 7] =
+    [Field::Camera, Field::Format, Field::Gamma, Field::Gamut, Field::ShootDate, Field::Notes, Field::Model];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputKind {
@@ -107,6 +109,7 @@ pub enum InputKind {
     ShootDate,
     Notes,
     SetLabel,
+    Model,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,6 +184,10 @@ pub struct DetailsState {
     /// it again with ffprobe, as on the command line).
     pub shoot_edited: bool,
     pub notes: String,
+    /// Model hint read from the card (with its source).
+    pub model_hint: Option<String>,
+    /// The operator's own model name (passed as --model).
+    pub model: Option<String>,
 }
 
 pub struct App {
@@ -323,6 +330,11 @@ impl App {
         match &r {
             Ok(p) => {
                 self.details.camera = None;
+                self.details.model_hint = p.model_hint.clone();
+                self.details.model = None;
+                if let Some(h) = &p.model_hint {
+                    self.log(format!("model hint      {h}"));
+                }
                 match &p.camera {
                     Ok(id) => {
                         self.set_camera(id);
@@ -463,6 +475,7 @@ impl App {
                 gamut: Some(d.gamut.clone()),
                 shoot_date: d.shoot_edited.then(|| d.shoot_date.clone()),
                 notes: (!d.notes.is_empty()).then(|| d.notes.clone()),
+                model: d.model.clone(),
                 yes: true,
             },
             via,
@@ -740,6 +753,11 @@ impl App {
                     }
                     Field::Notes => {
                         self.popup = Some(Popup::Input { kind: InputKind::Notes, text: self.details.notes.clone() });
+                        return None;
+                    }
+                    Field::Model => {
+                        let text = self.details.model.clone().unwrap_or_default();
+                        self.popup = Some(Popup::Input { kind: InputKind::Model, text });
                         return None;
                     }
                 };
@@ -1043,6 +1061,13 @@ impl App {
                 self.details.shoot_date = text;
                 self.details.shoot_src = "given".into();
                 self.details.shoot_edited = true;
+            }
+            InputKind::Model => {
+                if text.contains('|') || text.chars().any(char::is_control) {
+                    self.popup = Some(Popup::Message(vec!["The model name cannot contain '|'.".into()]));
+                    return None;
+                }
+                self.details.model = (!text.is_empty()).then_some(text);
             }
             InputKind::Notes => {
                 if text.contains('|') || text.chars().any(char::is_control) {

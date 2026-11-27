@@ -13,6 +13,10 @@ pub struct CameraProfile {
     /// `vendor` key (Detection); lets a recognised card layout (Sony, Canon, …) name the
     /// camera when only one profile has that vendor.
     pub vendor: String,
+    /// `model` key: the model string(s) the camera writes in its metadata (comma list for
+    /// spellings, e.g. `AG-CX350, CX350`). Matched against live-media model hints.
+    pub models: Vec<String>,
+    /// `card_layout` folders; nested paths such as `PRIVATE/M4ROOT` allowed.
     pub card_layout: Vec<String>,
     pub filename_pattern: Vec<String>,
     pub file_formats: Vec<String>,
@@ -79,6 +83,7 @@ pub fn parse_camera(path: &Path, text: &str) -> Result<CameraProfile, String> {
         id,
         name: get("name"),
         vendor: get("vendor"),
+        models: split_list(&get("model")),
         card_layout: split_list(&get("card_layout")),
         filename_pattern: split_list(&get("filename_pattern")),
         file_formats: split_list(&get("file_formats")),
@@ -161,6 +166,14 @@ fn load<T>(dir: &Path, ext: &str, parse: fn(&Path, &str) -> Result<T, String>) -
 }
 
 /// Case-insensitive glob with `*` and `?`.
+impl CameraProfile {
+    /// A fallback profile (`vendor: Generic`, e.g. generic-avchd): guessed only when no
+    /// specific profile matches.
+    pub fn is_generic(&self) -> bool {
+        self.vendor.eq_ignore_ascii_case("generic")
+    }
+}
+
 pub fn glob_match(pattern: &str, name: &str) -> bool {
     let p: Vec<char> = pattern.to_lowercase().chars().collect();
     let n: Vec<char> = name.to_lowercase().chars().collect();

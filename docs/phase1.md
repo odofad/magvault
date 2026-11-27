@@ -145,6 +145,48 @@ duration), hash at ingest, every verify (start / end, ok or MISMATCH), the renam
 incoming into place, helper calls (arguments and result; never the sudo password). On a
 client, DEBUG lines are also sent to the server log through the client-issues path.
 
+## Camera identification (fixes from docs/camera-identification-findings.md)
+
+- **Sidecars and junk.** Sony `<clip>M01.XML` and `<clip>R01.BIM` next to a clip are its
+  sidecars (FX6, FS7, FS5, XAVC S). `SALVAGE.TMP` (FX6 `XDROOT/General/Sony`, 256 MiB
+  preallocated) is junk: skipped and listed, never copied. `.MPG` is media (NEX-VG20
+  `MP_ROOT`). Panasonic `BACKUP.TMP` is still copied as "other" (not decided).
+- **Model hint.** `src/camera_meta.rs` reads the model only from metadata next to live
+  media: clip sidecar XML (`modelName`), `MEDIAPRO.XML` `systemKind` only when its folder
+  holds clips (prefix; ` ver.x` dropped), P2 `CONTENTS/CLIP/<stem>.XML`, XML inside
+  MOV / MXF / MP4 clips (first and last MiB, up to 8 clips), MPEG `MVI_DATA` (`SONY` …
+  `NEX-VG20E`), thumbnail / DCIM EXIF Model. `AVF_INFO` and a `MEDIAPRO.XML` beside no
+  clip are ignored (they name the camera that formatted the card). Two spellings of one
+  body (`CX350` / `AG-CX350`) count once; different models are shown as "more than one
+  camera on this card". The hint is shown in `cards`, the ingest summary ("model hint …
+  — confirm, or pass --model <name>") and the TUI Details ("Model … (from card)",
+  editable). It is stored on the mag card as `camera_model_hint: <model> (<source>)`
+  (kept by reconcile; no database column yet) and never replaces the camera profile.
+- **Camera guess.** A profile whose `model:` names the hint scores highest (exact, or a
+  letter suffix: `NEX-VG20` ↔ `NEX-VG20E`; never a further digit, so `FDR-AX3` does not
+  match `FDR-AX53` or `FDR-AX33`). A specific profile whose `model:` names none of the
+  hints is ruled out. Otherwise `card_layout` is required (nested paths such as
+  `PRIVATE/M4ROOT` allowed and must hold media) and, when the profile has
+  `filename_pattern`, a media file must match. `vendor: Generic` (generic-avchd) is a
+  fallback only when no specific profile scores. When the card names a model that no
+  profile has, ingest refuses without `--camera` and says which model the card names; the
+  layout-vendor fallback is not used then. `--model <name>` gives the operator's name for
+  the camera (stored as the hint, used for the guess).
+- **Layout label.** The card is labelled by the media trees that hold media, joined with
+  " + " (`Sony XDCAM (PRIVATE/XDROOT) + AVCHD (PRIVATE/AVCHD)`): Panasonic P2
+  (`CONTENTS/AVCLIP`), Panasonic (`PRIVATE/PANA_GRP`), Sony XAVC (`PRIVATE/M4ROOT`), Sony
+  XDCAM (`PRIVATE/XDROOT`, `XDROOT`), Sony MPEG (`MP_ROOT`), Canon XF, AVCHD
+  (`PRIVATE/AVCHD`). An empty `M4ROOT` no longer steals the label. AVCHD alone names no
+  vendor.
+- **Profiles shipped.** `init` installs every `share/cameras/*.cam` (generic-avchd,
+  sony-a7siii, sony-fdr-ax33, sony-vg20); a unit test keeps `STARTER_CAMERAS` equal to
+  the folder.
+- **Reference cards.** `cargo test reference_cards` rebuilds the seven reference cards in
+  miniature (folders, names, metadata strings) and checks label, guess, hint, pairing and
+  junk: AX3 → generic-avchd + hint FDR-AX53; FS5 → generic-avchd + PXW-FS5; FX6 → no
+  guess + ILME-FX6V; VG20 → sony-vg20 + NEX-VG20E; FS7 → no guess + PXW-FS7; A7 III → no
+  guess + ILCE-7M3; CX350 → generic-avchd + AG-CX350.
+
 ## What the pieces do
 
 ### Card discovery (`magvault cards`, `ingest` without a path)

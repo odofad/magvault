@@ -7,7 +7,14 @@ use crate::error::{Context, Result};
 use crate::textfile::atomic_write;
 use std::path::{Path, PathBuf};
 
-const STARTER_CAMERAS: &[(&str, &str)] = &[("sony-a7siii.cam", include_str!("../share/cameras/sony-a7siii.cam"))];
+/// Every camera profile in `share/cameras` (a unit test checks the list against the
+/// folder). `magvault init` copies them into an empty cameras folder.
+const STARTER_CAMERAS: &[(&str, &str)] = &[
+    ("generic-avchd.cam", include_str!("../share/cameras/generic-avchd.cam")),
+    ("sony-a7siii.cam", include_str!("../share/cameras/sony-a7siii.cam")),
+    ("sony-fdr-ax33.cam", include_str!("../share/cameras/sony-fdr-ax33.cam")),
+    ("sony-vg20.cam", include_str!("../share/cameras/sony-vg20.cam")),
+];
 const STARTER_ENCODERS: &[(&str, &str)] = &[
     ("default-320p.enc", include_str!("../share/encoders/default-320p.enc")),
     ("hevc-hq.enc", include_str!("../share/encoders/hevc-hq.enc")),
@@ -197,4 +204,28 @@ pub fn run_client(
         pointer = Some(p);
     }
     Ok(Done { created, pointer })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn starter_cameras_are_every_profile_in_share() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("share/cameras");
+        let mut in_share: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".cam"))
+            .collect();
+        in_share.sort();
+        let mut shipped: Vec<String> = STARTER_CAMERAS.iter().map(|(n, _)| n.to_string()).collect();
+        shipped.sort();
+        assert_eq!(shipped, in_share, "add new share/cameras/*.cam files to STARTER_CAMERAS");
+        for (name, text) in STARTER_CAMERAS {
+            assert_eq!(&std::fs::read_to_string(dir.join(name)).unwrap(), text);
+            crate::profiles::parse_camera(Path::new(name), text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+    }
 }

@@ -14,11 +14,62 @@ use std::process::Command;
 /// marks `.DS_Store` as skipped). Names are matched exactly; `._*` is AppleDouble.
 const JUNK_NAMES: &[&str] = &[".DS_Store", ".Spotlight-V100", ".Trashes", ".fseventsd", ".TemporaryItems"];
 
+/// Camera scratch files that are not media, matched case-insensitively by name. Sony
+/// XDCAM bodies (FX6) keep a preallocated 256 MiB `XDROOT/General/Sony/SALVAGE.TMP`
+/// (docs/camera-identification-findings.md).
+const JUNK_CAMERA_FILES: &[&str] = &["SALVAGE.TMP"];
+
 /// Extensions treated as media (one media file = one clip in v1). Everything else is a
-/// sidecar (same folder, same stem as a media file) or "other".
+/// sidecar (same folder, same stem as a media file) or "other". `mpg`: Sony MPEG-2 PS
+/// (NEX-VG20 `MP_ROOT/…/M2U00001.MPG`).
 const MEDIA_EXT: &[&str] = &[
-    "mov", "mp4", "m4v", "mxf", "avi", "mts", "m2ts", "mkv", "r3d", "braw", "crm", "ari", "insv", "360",
+    "mov", "mp4", "m4v", "mxf", "avi", "mts", "m2ts", "mkv", "r3d", "braw", "crm", "ari", "insv", "360", "mpg",
 ];
+
+/// Sony clip sidecars: `<clip stem>M01.XML` (NonRealTimeMeta) and `<clip stem>R01.BIM`
+/// sit next to the clip but do not share its stem.
+const SONY_SIDECAR_SUFFIXES: &[&str] = &["m01", "r01"];
+
+pub fn is_media_name(name: &str) -> bool {
+    MEDIA_EXT.contains(&ext_lower(name).as_str())
+}
+
+/// `rel` (one or more `/`-separated parts) under `root`, matching each part
+/// case-insensitively (cards are FAT/exFAT; profiles write `PRIVATE/M4ROOT`).
+pub fn find_dir_ci(root: &Path, rel: &str) -> Option<PathBuf> {
+    let mut cur = root.to_path_buf();
+    for part in rel.split('/').filter(|p| !p.is_empty()) {
+        let next = std::fs::read_dir(&cur).ok()?.flatten().find(|e| {
+            e.file_type().map(|t| t.is_dir()).unwrap_or(false) && e.file_name().to_string_lossy().eq_ignore_ascii_case(part)
+        })?;
+        cur = next.path();
+    }
+    Some(cur)
+}
+
+/// Whether a folder holds at least one media file (searched a few levels deep): an
+/// empty `PRIVATE/M4ROOT` left by a format does not count as a live tree.
+pub fn holds_media(dir: &Path) -> bool {
+    fn go(dir: &Path, depth: usize, budget: &mut usize) -> bool {
+        let Ok(rd) = std::fs::read_dir(dir) else { return false };
+        for e in rd.flatten() {
+            if *budget == 0 {
+                return false;
+            }
+            *budget -= 1;
+            let Ok(ft) = e.file_type() else { continue };
+            let name = e.file_name().to_string_lossy().into_owned();
+            if ft.is_file() && is_media_name(&name) && !is_junk(&name) {
+                return true;
+            }
+            if ft.is_dir() && depth < 6 && go(&e.path(), depth + 1, budget) {
+                return true;
+            }
+        }
+        false
+    }
+    go(dir, 0, &mut 20_000)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Role {
@@ -76,7 +127,7 @@ pub struct Probe {
 }
 
 fn is_junk(name: &str) -> bool {
-    JUNK_NAMES.contains(&name) || name.starts_with("._")
+    JUNK_NAMES.contains(&name) || name.starts_with("._") || JUNK_CAMERA_FILES.iter().any(|j| name.eq_ignore_ascii_case(j))
 }
 
 fn ext_lower(name: &str) -> String {
@@ -151,7 +202,8 @@ fn walk_dir(
     Ok(())
 }
 
-/// Classify files: media by extension; sidecars share folder and stem with a media file.
+/// Classify files: media by extension; sidecars share folder and stem with a media file,
+/// or are Sony `<stem>M01.XML` / `<stem>R01.BIM` next to the clip.
 pub fn classify(files: &mut [ProbedFile]) -> Vec<Clip> {
     let mut clips = Vec::new();
     let mut by_key: HashMap<(String, String), usize> = HashMap::new();
@@ -168,7 +220,14 @@ pub fn classify(files: &mut [ProbedFile]) -> Vec<Clip> {
     for f in files.iter_mut().filter(|f| f.role != Role::Media) {
         let name = Path::new(&f.rel).file_name().unwrap().to_string_lossy().into_owned();
         let parent = Path::new(&f.rel).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-        if let Some(&c) = by_key.get(&(parent, stem_lower(&name))) {
+        let stem = stem_lower(&name);
+        let sony = SONY_SIDECAR_SUFFIXES
+            .iter()
+            .find_map(|suf| stem.strip_suffix(suf).filter(|s| !s.is_empty()).map(str::to_string));
+        let hit = by_key
+            .get(&(parent.clone(), stem))
+            .or_else(|| sony.and_then(|s| by_key.get(&(parent, s))));
+        if let Some(&c) = hit {
             f.role = Role::Sidecar;
             f.clip = Some(c);
         }
@@ -279,41 +338,77 @@ pub fn probe(root: &Path, run_ffprobe: bool) -> Result<Probe> {
 
 /// Guess the camera profile: every `card_layout` folder present at the card root, and/or
 /// `filename_pattern` matching a media file. Highest score wins; a tie means no guess.
-pub fn guess_camera<'a>(probe: &Probe, cams: &'a [CameraProfile]) -> Option<&'a CameraProfile> {
-    let top: Vec<String> = std::fs::read_dir(&probe.root)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                .map(|e| e.file_name().to_string_lossy().to_lowercase())
-                .collect()
-        })
-        .unwrap_or_default();
+/// Camera guess from the card (docs/camera-identification-findings.md):
+///
+/// - a profile whose `model:` names a model hint read next to live media scores 10 (the
+///   strongest evidence; a card with clips of several cameras gives no such score); a
+///   specific profile whose `model:` names none of the hints is contradicted and scores 0;
+/// - otherwise `card_layout` is a requirement (every folder present; a nested entry such
+///   as `PRIVATE/M4ROOT` must hold media), and when the profile has `filename_pattern`,
+///   a media file must match one (+2; layout alone +1);
+/// - a generic profile (`vendor: Generic`) is only a fallback when no specific profile
+///   scores;
+/// - the highest score wins; a tie is no guess.
+pub fn guess_camera<'a>(probe: &Probe, cams: &'a [CameraProfile], hints: &[crate::camera_meta::Hint]) -> Option<&'a CameraProfile> {
     let media_names: Vec<String> = probe
         .clips
         .iter()
         .map(|c| Path::new(&probe.files[c.file].rel).file_name().unwrap().to_string_lossy().into_owned())
         .collect();
-    let mut scored: Vec<(u32, &CameraProfile)> = cams
-        .iter()
-        .map(|c| {
-            let mut score = 0;
-            if !c.card_layout.is_empty() && c.card_layout.iter().all(|d| top.contains(&d.to_lowercase())) {
-                score += 1;
-            }
-            if c.filename_pattern.iter().any(|p| media_names.iter().any(|n| glob_match(p, n))) {
-                score += 2;
-            }
-            (score, c)
-        })
-        .filter(|(s, _)| *s > 0)
-        .collect();
-    scored.sort_by_key(|s| std::cmp::Reverse(s.0));
-    match scored.as_slice() {
-        [] => None,
-        [(_, c)] => Some(c),
-        [(a, c), (b, _), ..] if a > b => Some(c),
+    let one_model = match hints {
+        [h] => Some(h.model.as_str()),
         _ => None,
+    };
+    let names_any = |c: &CameraProfile| hints.iter().any(|h| c.models.iter().any(|m| crate::camera_meta::model_matches(&h.model, m)));
+    let score = |c: &CameraProfile| -> u32 {
+        if let Some(h) = one_model {
+            if c.models.iter().any(|m| crate::camera_meta::model_matches(h, m)) {
+                return 10;
+            }
+        }
+        // The card names its camera and this specific profile is another model: the
+        // metadata contradicts it, whatever the folders say.
+        if !hints.is_empty() && !c.is_generic() && !c.models.is_empty() && !names_any(c) {
+            return 0;
+        }
+        if !layout_matches(&probe.root, &c.card_layout) {
+            return 0;
+        }
+        let names = c.filename_pattern.iter().any(|p| media_names.iter().any(|n| glob_match(p, n)));
+        match (c.filename_pattern.is_empty(), names) {
+            (false, true) => 3,
+            (false, false) => 0,
+            (true, _) if !c.card_layout.is_empty() => 1,
+            _ => 0,
+        }
+    };
+    let pick = |generic: bool| -> Option<&'a CameraProfile> {
+        let mut scored: Vec<(u32, &CameraProfile)> =
+            cams.iter().filter(|c| c.is_generic() == generic).map(|c| (score(c), c)).filter(|(s, _)| *s > 0).collect();
+        scored.sort_by_key(|s| std::cmp::Reverse(s.0));
+        match scored.as_slice() {
+            [] => None,
+            [(_, c)] => Some(c),
+            [(a, c), (b, _), ..] if a > b => Some(c),
+            _ => None,
+        }
+    };
+    let specific_scored = cams.iter().any(|c| !c.is_generic() && score(c) > 0);
+    if specific_scored {
+        pick(false)
+    } else {
+        pick(true)
     }
+}
+
+/// Every `card_layout` entry is present: a top-level name exists; a nested path
+/// (`PRIVATE/M4ROOT`) exists and holds media.
+pub fn layout_matches(root: &Path, layout: &[String]) -> bool {
+    !layout.is_empty()
+        && layout.iter().all(|d| match find_dir_ci(root, d) {
+            Some(dir) => !d.contains('/') || holds_media(&dir),
+            None => false,
+        })
 }
 
 /// Shoot-day guess (PLAN.md Mag rules): earliest media date. Uses the container's

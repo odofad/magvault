@@ -107,14 +107,18 @@ pass "Sony, Canon XF and generic DCIM detected with camera guess; non-card folde
 expect_fail "several cards and --yes: operator must pick" "pass the path" mc ingest --scan-root "$MNT" --project Field --yes </dev/null
 
 echo "== ingest --yes: camera guess, card pick without a terminal"
-Y1="$W/yes1"; mkdir -p "$Y1/SONY_XAVC/PRIVATE/M4ROOT/CLIP"          # Sony layout, no DCIM, camera file names
-mkclip "$Y1/SONY_XAVC/PRIVATE/M4ROOT/CLIP/C0001.MP4"
+Y1="$W/yes1"; mkdir -p "$Y1/VG20/MP_ROOT/100PNV01" "$Y1/VG20/PRIVATE/AVCHD/BDMV/STREAM" "$Y1/VG20/AVF_INFO"
+# NEX-VG20 reference layout: MPEG-2 with the model in MVI_DATA; a leftover FDR-AX53 profile in AVF_INFO is ignored.
+printf '\x00\x00\x01\xbaMVI_DATA SONY\x00\x00NEX-VG20E\x00HDR-000010G\x00' > "$Y1/VG20/MP_ROOT/100PNV01/M2U00001.MPG"
+printf '<MediaProfile><System systemKind="FDR-AX53"/></MediaProfile>' > "$Y1/VG20/AVF_INFO/AVIN0001.INT"
 out=$(ms ingest --scan-root "$Y1" --project YesTest --shoot-date 2026-11-20 --yes </dev/null 2>&1) || { echo "$out"; fail "--yes, no path, no TTY, one card"; }
-grep -q -- "--yes: one card detected, using $Y1/SONY_XAVC" <<<"$out" || { echo "$out"; fail "card not picked"; }
-grep -q "camera      Sony A7S III \[sony-a7siii\]  (guessed)" <<<"$out" || { echo "$out"; fail "camera not guessed from the Sony layout"; }
+grep -q -- "--yes: one card detected, using $Y1/VG20" <<<"$out" || { echo "$out"; fail "card not picked"; }
+grep -q "camera      Sony NEX-VG20 \[sony-vg20\]  (guessed)" <<<"$out" || { echo "$out"; fail "camera not guessed from the live-media model"; }
+grep -q "model hint  NEX-VG20E (MPEG MVI_DATA)" <<<"$out" || { echo "$out"; fail "model hint not shown"; }
 YF=$(awk '/^ingested /{print $2}' <<<"$out")
 [ -d "$SRV/mags/$YF" ] || fail "--yes ingest did not commit"
-pass "--yes, no path, no TTY, one card: picked; camera guessed from the layout (no --camera)"
+grep -qx "camera_model_hint: NEX-VG20E (MPEG MVI_DATA)" "$SRV/mags/$YF/magcard.txt" || fail "model hint not on the mag card"
+pass "--yes, no path, no TTY, one card: picked; camera guessed from live-media metadata (no --camera), hint on the card"
 [ "$(sql "select count(*) from encoder_job_clips jc join encoder_jobs j on j.id=jc.job_id join mags m on m.id=j.mag_id where m.folder='$YF' and jc.status='queued'")" = 1 ] || fail "job clip links"
 [ "$(sql "select count(*) from clips c join mags m on m.id=c.mag_id where m.folder='$YF' and c.id not in (select clip_id from encoder_job_clips)")" = 0 ] || fail "clip without a job link"
 pass "queued 320p job is linked to the mag's clips (encoder_job_clips)"
@@ -123,7 +127,7 @@ expect_fail "--yes, no path, no TTY, two cards: refused" "2 cards detected and -
   ms ingest --scan-root "$Y1" --project YesTest --shoot-date 2026-11-20 --yes </dev/null
 expect_fail "--yes, no camera guess and no --camera: refused, says what is missing" "camera missing: no camera profile matches this card (layout: Generic DCIM); pass --camera" \
   ms ingest "$Y1/NOCAM" --project YesTest --shoot-date 2026-11-20 --yes </dev/null
-Y2="$W/yes2"; mkdir -p "$Y2"; cp -a "$Y1/SONY_XAVC" "$Y2/"
+Y2="$W/yes2"; mkdir -p "$Y2"; cp -a "$Y1/VG20" "$Y2/"
 expect_fail "no path, no TTY, one card, no --yes: refused" "no terminal to confirm the card; re-run with --yes" \
   ms ingest --scan-root "$Y2" --project YesTest --shoot-date 2026-11-20 </dev/null
 mkdir -p "$W/mounts-empty"
@@ -132,6 +136,27 @@ expect_fail "no card at all: refused" "no camera card detected in $W/mounts-empt
 ING=(--project Field --camera sony-a7siii --shoot-date 2026-11-20 --yes)
 ONE="$W/mounts1"; mkdir -p "$ONE"; cp -a "$MNT/A7SIII_128" "$ONE/"
 CARD="$ONE/A7SIII_128"
+
+echo "== FX6 / XDCAM card: M01.XML sidecars paired, SALVAGE.TMP skipped, model hint, no hard guess"
+FX6="$W/fx6/FX6"; mkdir -p "$FX6/XDROOT/Clip" "$FX6/XDROOT/General/Sony" "$FX6/SONY"
+for n in 3985 3986; do
+  mkclip "$FX6/XDROOT/Clip/PDTV-FX6_$n.MXF"
+  printf '<NonRealTimeMeta><Device manufacturer="Sony" modelName="ILME-FX6V" serialNo="2509191"/></NonRealTimeMeta>' > "$FX6/XDROOT/Clip/PDTV-FX6_${n}M01.XML"
+done
+printf '<MediaProfile><System systemKind="ILME-FX6V ver.5.020"/></MediaProfile>' > "$FX6/XDROOT/MEDIAPRO.XML"
+head -c 300000 /dev/zero > "$FX6/XDROOT/General/Sony/SALVAGE.TMP"
+expect_fail "FX6 without --camera: refused, names the model the card writes" "camera missing: no camera profile has the model this card names: ILME-FX6V (clip sidecar XML)" \
+  ms ingest "$FX6" --project Fx6Test --shoot-date 2026-11-27 --yes </dev/null
+out=$(ms ingest "$FX6" --project Fx6Test --camera sony-a7siii --format "XAVC S" --shoot-date 2026-11-27 --yes </dev/null 2>&1) || { echo "$out"; fail "FX6 ingest with a stand-in camera"; }
+grep -q "files       5 (2 clips, 2 sidecars, 1 other)" <<<"$out" || { echo "$out"; fail "FX6 M01.XML sidecars not paired"; }
+grep -q "skipped     1 junk item(s): XDROOT/General/Sony/SALVAGE.TMP" <<<"$out" || { echo "$out"; fail "SALVAGE.TMP not skipped"; }
+XF=$(awk '/^ingested /{print $2}' <<<"$out")
+[ ! -e "$SRV/mags/$XF/XDROOT/General/Sony/SALVAGE.TMP" ] || fail "SALVAGE.TMP ingested"
+grep -qx "camera_model_hint: ILME-FX6V (clip sidecar XML)" "$SRV/mags/$XF/magcard.txt" || fail "FX6 hint not on the card"
+[ "$(sql "select count(*) from files f join mags m on m.id=f.mag_id where m.folder='$XF' and f.role='sidecar' and f.clip_id is not null")" = 2 ] || fail "sidecars not recorded as sidecars of their clips"
+grep -q "^ok  *$XF" <<<"$(ms reconcile "$XF")" || fail "reconcile FX6 mag (hint kept)"
+grep -qx "camera_model_hint: ILME-FX6V (clip sidecar XML)" "$SRV/mags/$XF/magcard.txt" || fail "reconcile dropped the hint"
+pass "FX6: 2 clips + 2 paired M01.XML sidecars, SALVAGE.TMP skipped, hint ILME-FX6V on the card, operator picks the camera"
 
 echo "== client ingest: card → local staging → server → autoclean"
 mc ingest --scan-root "$ONE" "${ING[@]}" > "$W/i1.out" 2> "$W/i1.err" </dev/null || { cat "$W/i1.err"; fail "ingest via staging"; }

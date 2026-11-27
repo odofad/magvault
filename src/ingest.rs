@@ -54,6 +54,9 @@ pub struct Args {
     pub gamut: Option<String>,
     pub shoot_date: Option<String>,
     pub notes: Option<String>,
+    /// `--model`: the camera model as the operator names it; replaces the model hint read
+    /// from the card (and is used for the camera guess like one).
+    pub model: Option<String>,
     pub yes: bool,
 }
 
@@ -112,6 +115,9 @@ pub struct Details {
     pub shoot_src: &'static str,
     pub notes: String,
     pub source_label: String,
+    /// Model hint (live-media metadata or --model) with its source, stored on the mag card
+    /// as `camera_model_hint`. Not the camera profile; the operator confirms it.
+    pub model_hint: Option<String>,
 }
 
 /// One file of a new mag as it goes into the manifest, the database and the MHL.
@@ -229,7 +235,15 @@ pub fn choose_details(
     cams: &[CameraProfile],
     src: &Path,
 ) -> Result<Details> {
-    let cam = choose_camera(a, probe, cams)?.clone();
+    let hints = match &a.model {
+        Some(m) => vec![crate::camera_meta::Hint { model: crate::camera_meta::normalise(m), source: "given by the operator" }],
+        None => crate::camera_meta::read(probe),
+    };
+    let model_hint = crate::camera_meta::describe(&hints).map(|h| h.replace('|', "/"));
+    if let Some(h) = &model_hint {
+        check_card_field("model hint", h)?;
+    }
+    let cam = choose_camera(a, probe, cams, &hints)?.clone();
     let pick =
         |what: &str, given: &Option<String>, list: &[String], default: &str| -> Result<String> {
             let v = given.clone().unwrap_or_else(|| default.to_string());
@@ -272,6 +286,7 @@ pub fn choose_details(
         shoot_src,
         notes,
         source_label,
+        model_hint,
     })
 }
 
@@ -315,6 +330,9 @@ pub fn print_summary(
         d.cam.id,
         guessed(a.camera.is_some())
     );
+    if let Some(h) = &d.model_hint {
+        crate::say!("  model hint  {h}  — confirm, or pass --model <name>");
+    }
     crate::say!(
         "  format      {}{}",
         d.file_format,
@@ -680,10 +698,15 @@ pub fn write_cards(
     dir: &Path,
     rec: &MagRecord,
     camera_model: &str,
+    model_hint: Option<&str>,
     entries: &[FileEntry],
     c4s: &[String],
 ) -> Result<()> {
-    let card = card_from_record(rec, Some(camera_model));
+    let mut card = card_from_record(rec, Some(camera_model));
+    if let Some(h) = model_hint {
+        // Extra header key (kept by reconcile); the database has no column for it yet.
+        card.set("camera_model_hint", h);
+    }
     atomic_write(&dir.join(magcard::FILE_NAME), card.render()?.as_bytes())?;
     let mhl_entries: Vec<mhl::Entry> = entries
         .iter()
@@ -909,7 +932,7 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
         interrupt::check()?;
         let rec = build_record(&folder, &mag_uuid, &project, &d, &entries);
         let c4s: Vec<String> = hashes.iter().map(|h| h.c4.clone()).collect();
-        write_cards(&st.dir, &rec, &d.cam.name, &entries, &c4s)?;
+        write_cards(&st.dir, &rec, &d.cam.name, d.model_hint.as_deref(), &entries, &c4s)?;
         // Last point where a stop signal is honoured. From here the rename into mags/ and the
         // database commit run to the end; a signal arriving now is held off (PLAN.md Threat model).
         interrupt::check()?;
@@ -1109,6 +1132,7 @@ fn choose_camera<'a>(
     a: &Args,
     probe: &Probe,
     cams: &'a [CameraProfile],
+    hints: &[crate::camera_meta::Hint],
 ) -> Result<&'a CameraProfile> {
     let available = || {
         cams.iter()
@@ -1126,7 +1150,7 @@ fn choose_camera<'a>(
                 available()
             ))
         }),
-        None => crate::discover::guess_camera(probe, cams).map_err(|why| {
+        None => crate::discover::guess_camera(probe, cams, hints).map_err(|why| {
             Error(format!(
                 "camera missing: {why}; pass --camera <profile id> (available: {})",
                 available()

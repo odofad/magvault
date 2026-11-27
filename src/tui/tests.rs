@@ -61,6 +61,7 @@ fn card(name: &str) -> Card {
         volume: Volume { mount: PathBuf::from(format!("/media/op/{name}")), device: "/dev/sdd1".into(), fstype: "exfat".into() },
         layout: "Sony XAVC (PRIVATE/M4ROOT)".into(),
         camera: Some(("sony-a7siii".into(), "Sony A7S III".into())),
+        model_hint: None,
         files: 22,
         bytes: 106_800_000,
         problem: None,
@@ -124,6 +125,7 @@ fn preview(path: &Path) -> Preview {
         total: 50_002_000,
         camera: Ok("sony-a7siii".into()),
         shoot: Some(("2011-04-30".into(), "earliest file modification time".into())),
+        model_hint: Some("ILCE-7M3 (clip sidecar XML)".into()),
     }
 }
 

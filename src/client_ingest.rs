@@ -157,7 +157,7 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
             let rels: Vec<&str> = probe.files.iter().map(|f| f.rel.as_str()).collect();
             ingest::rsync_copy(&probe.root, &rels, dir, list)?;
             ingest::verify_tree(dir, &ingest::expected_of(&entries), "verifying")?;
-            ingest::write_cards(dir, &rec, &d.cam.name, &entries, &c4s)
+            ingest::write_cards(dir, &rec, &d.cam.name, d.model_hint.as_deref(), &entries, &c4s)
         };
 
         // Local copies first.
@@ -206,7 +206,7 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
             let t = transport.as_ref().expect("online implies a transport");
             let sent = match &local {
                 Some(dir) => sync::send(t, cc, dir, &folder),
-                None => send_direct(t, cc, &probe, &folder, &rec, &d.cam.name, &entries, &c4s),
+                None => send_direct(t, cc, &probe, &folder, &rec, &d.cam.name, d.model_hint.as_deref(), &entries, &c4s),
             };
             match sent {
                 Ok(()) => {
@@ -414,13 +414,14 @@ fn send_direct(
     folder: &str,
     rec: &crate::catalog::MagRecord,
     cam_name: &str,
+    model_hint: Option<&str>,
     entries: &[FileEntry],
     c4s: &[String],
 ) -> Result<()> {
     let st = Staged::create(&cc.staging.join(".incoming"), folder)?;
     let r = (|| -> Result<()> {
         std::fs::create_dir(&st.dir).ctx(format!("cannot create {}", st.dir.display()))?;
-        ingest::write_cards(&st.dir, rec, cam_name, entries, c4s)?;
+        ingest::write_cards(&st.dir, rec, cam_name, model_hint, entries, c4s)?;
         let rels: Vec<&str> = probe.files.iter().map(|f| f.rel.as_str()).collect();
         t.upload(&probe.root, &rels, folder, &st.list)?;
         let meta = internal_files(&st.dir)?;

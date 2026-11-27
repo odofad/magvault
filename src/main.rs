@@ -2,6 +2,7 @@
 
 mod catalog;
 mod client;
+mod camera_meta;
 mod client_ingest;
 mod config;
 mod db;
@@ -143,6 +144,7 @@ fn base_args(cli: &mut Cli) -> ingest::Args {
         gamut: cli.take("--gamut"),
         shoot_date: cli.take("--shoot-date"),
         notes: cli.take("--notes"),
+        model: cli.take("--model"),
         yes: cli.flag(&["--yes", "-y"]),
         source: PathBuf::new(),
     }

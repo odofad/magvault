@@ -95,6 +95,8 @@ pub struct Preview {
     pub camera: Result<String, String>,
     /// Shoot day and where it came from, when it can be guessed.
     pub shoot: Option<(String, String)>,
+    /// Camera model read next to live media, with its source (operator confirms).
+    pub model_hint: Option<String>,
 }
 
 pub fn gather(cc: &ClientConfig, scan_roots: &[PathBuf]) -> Snapshot {
@@ -183,7 +185,9 @@ pub fn preview(path: &Path, cameras: &[CameraProfile]) -> Result<Preview, String
             (f.rel.clone(), role, f.size)
         })
         .collect();
-    let camera = discover::guess_camera(&p, cameras).map(|c| c.id.clone());
+    let hints = crate::camera_meta::read(&p);
+    let camera = discover::guess_camera(&p, cameras, &hints).map(|c| c.id.clone());
+    let model_hint = crate::camera_meta::describe(&hints);
     let shoot = probe::guess_shoot_day(&p).map(|(d, src)| (d, src.to_string()));
-    Ok(Preview { files, skipped: p.skipped.clone(), total: p.total_bytes, camera, shoot })
+    Ok(Preview { files, skipped: p.skipped.clone(), total: p.total_bytes, camera, shoot, model_hint })
 }
