@@ -587,7 +587,12 @@ Per-file shot logging is not part of ingest.
 - Date format DD/MM/YYYY.
 - Both can be set in config. Defaults are 24-hour and DD/MM/YYYY.
 - Ingest has a system-time block (wall clock).
-- Block 2 shows the shoot date and the clip time range (e.g. 11:30 – 15:43), not a file list.
+- Block 2 is a card summary, not a file list:
+  - Shoot date and clip time range (e.g. 11:30 – 15:43)
+  - Number of clips
+  - Total size
+  - Frame rate for the card (dominant value; “mixed” if clips differ)
+  - Resolution for the card (same rule)
 
 ## Client staging cache
 
@@ -610,9 +615,8 @@ Status comes from hashes / mag identity, not from the volume label.
 
 ## Help and log keys
 
-- F1: help for the current screen.
-- F2: deferred. Not in this batch. Revisit when the Logs module is real.
 - F1: help for the current screen. In this batch.
+- F2: deferred. Not in this batch. Revisit when the Logs module is real.
 
 ## Client ingest and field backups
 
