@@ -11,8 +11,14 @@ use std::path::{Path, PathBuf};
 /// folder). `magvault init` copies them into an empty cameras folder.
 const STARTER_CAMERAS: &[(&str, &str)] = &[
     ("generic-avchd.cam", include_str!("../share/cameras/generic-avchd.cam")),
+    ("panasonic-ag-cx350.cam", include_str!("../share/cameras/panasonic-ag-cx350.cam")),
     ("sony-a7siii.cam", include_str!("../share/cameras/sony-a7siii.cam")),
     ("sony-fdr-ax33.cam", include_str!("../share/cameras/sony-fdr-ax33.cam")),
+    ("sony-fdr-ax53.cam", include_str!("../share/cameras/sony-fdr-ax53.cam")),
+    ("sony-ilce-7m3.cam", include_str!("../share/cameras/sony-ilce-7m3.cam")),
+    ("sony-ilme-fx6.cam", include_str!("../share/cameras/sony-ilme-fx6.cam")),
+    ("sony-pxw-fs5.cam", include_str!("../share/cameras/sony-pxw-fs5.cam")),
+    ("sony-pxw-fs7.cam", include_str!("../share/cameras/sony-pxw-fs7.cam")),
     ("sony-vg20.cam", include_str!("../share/cameras/sony-vg20.cam")),
 ];
 const STARTER_ENCODERS: &[(&str, &str)] = &[
