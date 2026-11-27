@@ -277,6 +277,17 @@ Project creation must offer these lists. Editing later is allowed, but the value
 - Closing or re-opening a project is a deliberate action. It only changes the flag; files on disk never move.
 - Default view everywhere except the library shows only open projects.
 
+
+## Profile updates
+
+Camera and encoder profiles are updated without a full Magvault upgrade.
+
+- Shipped inside the `.deb` (the `share/cameras` and `share/encoders` set).
+- Or pulled from a git repository (or another profile repo) by a profile update command.
+- Update copies new or changed `.cam` / `.enc` files into the configured cameras and encoders folders.
+- Existing local edits are not overwritten unless the operator confirms.
+- `init` still installs the starter set into an empty folder.
+
 ## Camera profiles
 
 One plain-text `.cam` file per camera, all living in the `cameras/` folder (path in path.conf).
