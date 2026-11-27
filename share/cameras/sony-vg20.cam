@@ -1,0 +1,23 @@
+# Magvault camera profile
+name: Sony NEX-VG20
+id: sony-vg20
+
+vendor: Sony
+model: NEX-VG20
+card_layout: PRIVATE
+filename_pattern: *.MTS
+
+file_formats: AVCHD, MPEG-2 PS
+default_format: AVCHD
+
+gamma: Rec.709, CinemaTone
+default_gamma: Rec.709
+
+gamut: Rec.709
+default_gamut: Rec.709
+
+typical_resolutions: 1920x1080, 1440x1080
+typical_fps: 24, 25, 50, 60
+audio_channels: 2, 6
+
+notes: E-mount Handycam. AVCHD 2.0. No S-Log.
