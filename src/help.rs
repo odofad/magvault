@@ -73,7 +73,7 @@ FLAGS
   --shoot-date <date>    YYYY-MM-DD (default: earliest media date)
   --notes <text>         mag-level notes
   --model <name>         camera model as you name it (default: the model the card's live
-                         media names, shown as "model hint"; stored on the mag card)
+                         media names, shown as \"model hint\"; stored on the mag card)
   --yes, -y              accept the guesses and the single detected card; no prompts
   --scan-root <dir>      look for cards in the folders of <dir> instead of mounts (repeatable)
 
