@@ -230,15 +230,18 @@ A mag can be soft-locked once it has been used on a production. Soft lock does n
 
 
 
-### Project requirements on the client
+### Job card (client)
 
-The client dashboard has a page that shows the requirements of open projects.
+The client dashboard has a Job card page. The field operator loads it to see what the producer required before setting up gear.
 
-- Operator selects a project.
+- Operator selects an open project.
 - The page shows the fixed values: frame rate, resolution, GOP.
-- Used when setting up gear, before cards are loaded.
-- Read-only on the client. Requirements are set at project creation on the server.
+- Read-only on the client. Requirements are set by the producer at project creation on the server.
 - If a project has no requirements, the page says so.
+
+### Accountability
+
+The ingest warning is the record. If the operator loads footage that does not meet the job card, Magvault logs the mismatch to the project. The producer can open that log and confront the operator. The warning does not block the ingest. It makes the miss visible.
 
 ## Project requirements warning
 
