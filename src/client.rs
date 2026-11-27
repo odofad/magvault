@@ -25,6 +25,8 @@ use crate::interrupt;
 use crate::log::Level;
 use crate::textfile::atomic_write;
 use crate::util::esc;
+use crate::cardinfo::Requirements;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -184,6 +186,23 @@ impl Transport {
     /// Open projects on the server: (uuid, name).
     pub fn projects(&self) -> Result<Vec<(String, String)>> {
         Ok(parse_projects(&self.call("projects")?))
+    }
+
+    /// Requirements of open projects on the server (`uuid | fps=25 res=HD`).
+    pub fn requirements(&self) -> Result<BTreeMap<String, Requirements>> {
+        Ok(parse_requirements(&self.call("requirements")?))
+    }
+
+    /// The server's camera profiles (id with its formats, gammas, gamuts). `None` when the
+    /// server does not publish them yet (older gate, or serve has not run since the update).
+    pub fn cameras(&self) -> Result<Option<Vec<ServerCamera>>> {
+        let out = match self.call("cameras") {
+            Ok(o) => o,
+            Err(e) if e.0.contains("command refused") => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let v = parse_cameras(&out);
+        Ok((!v.is_empty()).then_some(v))
     }
 
     /// rsync `rels` (relative to `src_root`) into the spool folder `<folder>/` on the server.
@@ -417,6 +436,107 @@ pub fn parse_projects(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// One camera profile as the server publishes it (`results/cameras.txt`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerCamera {
+    pub id: String,
+    pub formats: Vec<String>,
+    pub gamma: Vec<String>,
+    pub gamut: Vec<String>,
+}
+
+/// `id | fmt, fmt | gamma, gamma | gamut, gamut` per line (the `.cam` list values, which
+/// never contain commas).
+pub fn render_cameras(cams: &[crate::profiles::CameraProfile]) -> String {
+    cams.iter()
+        .map(|c| format!("{} | {} | {} | {}\n", c.id, c.file_formats.join(", "), c.gamma.join(", "), c.gamut.join(", ")))
+        .collect()
+}
+
+pub fn parse_cameras(text: &str) -> Vec<ServerCamera> {
+    let list = |s: &str| crate::textfile::split_list(s);
+    text.lines()
+        .filter_map(|l| {
+            let p: Vec<&str> = l.split(" | ").collect();
+            let [id, f, g, m] = p.as_slice() else { return None };
+            crate::profiles::valid_id(id).then(|| ServerCamera { id: id.to_string(), formats: list(f), gamma: list(g), gamut: list(m) })
+        })
+        .collect()
+}
+
+/// Camera values a mag will carry, checked against the server's profiles before anything
+/// is uploaded (the server checks again on commit; it is authoritative).
+pub fn check_server_camera(cams: &[ServerCamera], id: &str, format: &str, gamma: &str, gamut: &str) -> std::result::Result<(), String> {
+    let Some(c) = cams.iter().find(|c| c.id == id) else {
+        return Err(format!(
+            "camera profile {id:?} is not on the server (the server has: {}); ask the admin to install it there, or pick a profile the server has",
+            cams.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(", ")
+        ));
+    };
+    for (what, v, list) in [("format", format, &c.formats), ("gamma", gamma, &c.gamma), ("gamut", gamut, &c.gamut)] {
+        if !list.iter().any(|x| x == v) {
+            return Err(format!("{what} {v:?} is not offered by the server's camera profile {id} (server: {})", list.join(", ")));
+        }
+    }
+    Ok(())
+}
+
+fn cameras_cache(cc: &ClientConfig) -> PathBuf {
+    cc.dir.join("cameras.cache")
+}
+
+/// The server's camera profiles: fetched when online (and cached), else the cache.
+/// `None` when nothing is known (no server list yet).
+pub fn server_cameras(cc: &ClientConfig, t: Option<&Transport>) -> Option<Vec<ServerCamera>> {
+    if let Some(t) = t {
+        if let Ok(Some(v)) = t.cameras() {
+            let text: String = v
+                .iter()
+                .map(|c| format!("{} | {} | {} | {}\n", c.id, c.formats.join(", "), c.gamma.join(", "), c.gamut.join(", ")))
+                .collect();
+            let _ = atomic_write(&cameras_cache(cc), text.as_bytes());
+            return Some(v);
+        }
+    }
+    let v = parse_cameras(&std::fs::read_to_string(cameras_cache(cc)).ok()?);
+    (!v.is_empty()).then_some(v)
+}
+
+pub fn parse_requirements(text: &str) -> BTreeMap<String, Requirements> {
+    text.lines()
+        .filter_map(|l| l.split_once(" | "))
+        .filter(|(id, _)| crate::util::uuid_ok(id))
+        .map(|(id, r)| (id.to_string(), Requirements::parse(r)))
+        .filter(|(_, r)| !r.is_empty())
+        .collect()
+}
+
+fn req_cache_path(cc: &ClientConfig) -> PathBuf {
+    cc.dir.join("requirements.cache")
+}
+
+fn req_local_path(cc: &ClientConfig) -> PathBuf {
+    cc.dir.join("requirements.local")
+}
+
+/// Requirements of known projects: the server's (fetched when online, else cached) plus
+/// those of projects this client created that the server does not list yet.
+pub fn requirements(cc: &ClientConfig, t: Option<&Transport>) -> BTreeMap<String, Requirements> {
+    let mut server = None;
+    if let Some(t) = t {
+        if let Ok(r) = t.requirements() {
+            let text: String = r.iter().map(|(id, q)| format!("{id} | {}\n", q.render())).collect();
+            let _ = atomic_write(&req_cache_path(cc), text.as_bytes());
+            server = Some(r);
+        }
+    }
+    let mut all = server.unwrap_or_else(|| parse_requirements(&std::fs::read_to_string(req_cache_path(cc)).unwrap_or_default()));
+    for (id, r) in parse_requirements(&std::fs::read_to_string(req_local_path(cc)).unwrap_or_default()) {
+        all.entry(id).or_insert(r);
+    }
+    all
+}
+
 fn cache_path(cc: &ClientConfig) -> PathBuf {
     cc.dir.join("projects.cache")
 }
@@ -462,11 +582,18 @@ pub fn projects(cc: &ClientConfig, t: Option<&Transport>) -> Vec<(String, String
 /// Remember a project this client created, so the next ingest (online or not) reuses its UUID
 /// instead of creating another project with the same name.
 pub fn remember_local_project(cc: &ClientConfig, project: &ingest::ProjectChoice) -> Result<()> {
-    if let ingest::ProjectChoice::New { id, name } = project {
+    if let ingest::ProjectChoice::New { id, name, req } = project {
         let mut text = std::fs::read_to_string(local_path(cc)).unwrap_or_default();
         if !parse_projects(&text).iter().any(|(i, _)| i == id) {
             text.push_str(&format!("{id} | {name}\n"));
             atomic_write(&local_path(cc), text.as_bytes())?;
+        }
+        if !req.is_empty() {
+            let mut text = std::fs::read_to_string(req_local_path(cc)).unwrap_or_default();
+            if !parse_requirements(&text).contains_key(id) {
+                text.push_str(&format!("{id} | {}\n", req.render()));
+                atomic_write(&req_local_path(cc), text.as_bytes())?;
+            }
         }
     }
     Ok(())
@@ -478,30 +605,59 @@ pub fn remember_local_project(cc: &ClientConfig, project: &ingest::ProjectChoice
 pub fn choose_project(
     a: &ingest::Args,
     known: &[(String, String)],
+    reqs: &BTreeMap<String, Requirements>,
 ) -> Result<ingest::ProjectChoice> {
-    if let Some(id) = &a.project_id {
+    let p = if let Some(id) = &a.project_id {
         let (id, name) = known
             .iter()
             .find(|(i, _)| i == id)
             .ok_or_else(|| Error(format!("project {id} is not an open project known to this client (connect once to refresh)")))?;
-        return Ok(ingest::ProjectChoice::Existing {
+        ingest::ProjectChoice::Existing {
             id: id.clone(),
             name: name.clone(),
             status: "open".into(),
-        });
+        }
+    } else {
+        let name = ingest::project_name_arg(a)?;
+        let rows: Vec<(String, String, String)> = known
+            .iter()
+            .filter(|(_, n)| *n == name)
+            .map(|(i, n)| (i.clone(), n.clone(), "open".into()))
+            .collect();
+        ingest::pick_project(&name, &rows)?
+    };
+    let current = reqs.get(p.id()).copied().unwrap_or_default();
+    ingest::with_requirements(p, a, &current)
+}
+
+/// Requirements of the chosen project (a new one: its own).
+pub fn project_requirements(p: &ingest::ProjectChoice, reqs: &BTreeMap<String, Requirements>) -> Requirements {
+    match p {
+        ingest::ProjectChoice::New { req, .. } => *req,
+        ingest::ProjectChoice::Existing { id, .. } => reqs.get(id).copied().unwrap_or_default(),
     }
-    let name = ingest::project_name_arg(a)?;
-    let rows: Vec<(String, String, String)> = known
-        .iter()
-        .filter(|(_, n)| *n == name)
-        .map(|(i, n)| (i.clone(), n.clone(), "open".into()))
-        .collect();
-    ingest::pick_project(&name, &rows)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_camera_list_roundtrip_and_check() {
+        let cam = crate::profiles::parse_camera(
+            Path::new("sony-a7siii.cam"),
+            "name: Sony A7S III\nid: sony-a7siii\nvendor: Sony\nfile_formats: XAVC S, ProRes RAW\ndefault_format: XAVC S\n\
+             gamma: S-Log3, Rec.709\ndefault_gamma: S-Log3\ngamut: S-Gamut3.Cine\ndefault_gamut: S-Gamut3.Cine\n",
+        )
+        .unwrap();
+        let list = parse_cameras(&render_cameras(&[cam]));
+        assert_eq!(list[0].formats, vec!["XAVC S".to_string(), "ProRes RAW".to_string()]);
+        assert!(check_server_camera(&list, "sony-a7siii", "XAVC S", "S-Log3", "S-Gamut3.Cine").is_ok());
+        assert!(check_server_camera(&list, "sony-fx6", "XAVC S", "S-Log3", "S-Gamut3.Cine").unwrap_err().contains("not on the server"));
+        assert!(check_server_camera(&list, "sony-a7siii", "XAVC S", "HLG", "S-Gamut3.Cine").unwrap_err().contains("gamma \"HLG\""));
+        let r = parse_requirements("cce28b9f-0000-4000-8000-000000000001 | fps=25 res=HD\nnot-a-uuid | fps=25\n");
+        assert_eq!(r.len(), 1);
+    }
 
     #[test]
     fn committer_line_decides_ready() {

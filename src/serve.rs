@@ -184,6 +184,7 @@ pub fn run(cfg: &Config, once: bool) -> Result<()> {
     }
     loop {
         export_projects(&db, &results)?;
+        export_cameras(cfg, &results)?;
         drain_client_logs(&spool, &log, &mut rates);
         for (client, folder) in ready_requests(&spool) {
             beat.set(&format!("committing {folder}"));
@@ -221,6 +222,27 @@ fn export_projects(db: &Db, results: &Path) -> Result<()> {
         .map(|r| format!("{} | {}\n", r[0].s(), r[1].s()))
         .collect();
     let path = results.join("projects.txt");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+        write_readable(&path, &text)?;
+    }
+    // Requirements of open projects: `uuid | fps=25 res=HD` (only projects that set some).
+    let rows = db.query(
+        "SELECT id, requirements FROM projects WHERE status = 'open' AND requirements IS NOT NULL AND requirements != '' ORDER BY id",
+        &[],
+    )?;
+    let text: String = rows.iter().map(|r| format!("{} | {}\n", r[0].s(), r[1].s())).collect();
+    let path = results.join("requirements.txt");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+        write_readable(&path, &text)?;
+    }
+    Ok(())
+}
+
+/// The server's camera profiles for clients (checked before an upload, PLAN.md "Camera
+/// profiles": the server is authoritative).
+fn export_cameras(cfg: &Config, results: &Path) -> Result<()> {
+    let text = crate::client::render_cameras(&profiles::load_cameras(&cfg.paths.cameras).profiles);
+    let path = results.join("cameras.txt");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
         write_readable(&path, &text)?;
     }
@@ -268,7 +290,7 @@ fn handle(
     let result_path = rdir.join(format!("{folder}.result"));
     let _ = mkdir_mode(&rdir, 0o2750);
     let _ = write_readable(&result_path, "verifying\n");
-    match commit_upload(cfg, db, &dir, folder) {
+    match commit_upload(cfg, db, log, &dir, folder) {
         Ok(msg) => {
             let _ = write_readable(&result_path, "committed\n");
             log.debug("serve", &format!("commit {folder} from client {client}: committed"));
@@ -306,7 +328,7 @@ fn handle(
 
 /// Verify an uploaded mag folder and commit it. Idempotent: a mag that is already committed
 /// reports success again (the client may have missed the first answer).
-pub fn commit_upload(cfg: &Config, db: &Db, dir: &Path, folder: &str) -> Result<String> {
+pub fn commit_upload(cfg: &Config, db: &Db, log: &Log, dir: &Path, folder: &str) -> Result<String> {
     let final_dir = cfg.paths.mags.join(folder);
     if db
         .query_one("SELECT id FROM mags WHERE folder = ?1", &[folder.into()])?
@@ -365,7 +387,8 @@ pub fn commit_upload(cfg: &Config, db: &Db, dir: &Path, folder: &str) -> Result<
             crate::bail!("{what} {v:?} is not offered by the server's camera profile {cam_id}");
         }
     }
-    let project = project_for_upload(db, &rec.project_uuid, &rec.project_name)?;
+    let new_req = card.get("project_requirements").map(crate::cardinfo::Requirements::parse).unwrap_or_default();
+    let project = project_for_upload(db, &rec.project_uuid, &rec.project_name, new_req)?;
     let proxy = ingest::proxy_profile_id(cfg)?;
 
     let probe = probe::probe_mag(dir)?;
@@ -397,6 +420,9 @@ pub fn commit_upload(cfg: &Config, db: &Db, dir: &Path, folder: &str) -> Result<
     }
     rec.project_uuid = project.id().to_string();
     rec.project_name = project.name().to_string();
+    // The server's own requirements check (authoritative; the client showed the warning).
+    let req = ingest::project_requirements(db, &project)?;
+    let check = req.check(&crate::cardinfo::summarize(&probe));
     ingest::commit_db(
         db,
         &rec,
@@ -407,6 +433,9 @@ pub fn commit_upload(cfg: &Config, db: &Db, dir: &Path, folder: &str) -> Result<
         dir,
         &final_dir,
     )?;
+    if !check.ok() {
+        ingest::log_to_project(db, log, &project, &rec.mag_uuid, folder, &check.line());
+    }
     Ok(format!(
         "{} · {} files, {} clips · project {}",
         human(probe.total_bytes),
@@ -420,7 +449,7 @@ pub fn commit_upload(cfg: &Config, db: &Db, dir: &Path, folder: &str) -> Result<
 /// open); else, when the UUID is unknown, the one open project with the same name (a client
 /// that was offline created its own UUID; the server's project wins); else a new project with
 /// the client's UUID and name. Two or more open projects with that name are refused.
-pub fn project_for_upload(db: &Db, uuid: &str, name: &str) -> Result<ProjectChoice> {
+pub fn project_for_upload(db: &Db, uuid: &str, name: &str, req: crate::cardinfo::Requirements) -> Result<ProjectChoice> {
     match db.query_one(
         "SELECT id, name, status FROM projects WHERE id = ?1",
         &[uuid.into()],
@@ -447,6 +476,7 @@ pub fn project_for_upload(db: &Db, uuid: &str, name: &str) -> Result<ProjectChoi
                 ([], 0) => Ok(ProjectChoice::New {
                     id: uuid.into(),
                     name: name.into(),
+                    req,
                 }),
                 ([], _) => Err(Error(format!(
                     "project {name:?} is closed; closed projects do not receive new mags"

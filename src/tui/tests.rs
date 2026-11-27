@@ -65,6 +65,7 @@ fn card(name: &str) -> Card {
         files: 22,
         bytes: 106_800_000,
         problem: None,
+        fingerprint: Some("f".repeat(64)),
     }
 }
 
@@ -100,6 +101,7 @@ fn snapshot() -> Snapshot {
     let mut s = Snapshot::empty(PathBuf::from("/home/op/mvclient/staging"));
     s.server = ServerState::Ready("magvaultclient@courage".into());
     s.cards = vec![card("A7SIII_128")];
+    s.dump = vec![crate::staging::DumpStatus::NotDumped];
     s.cameras = vec![camera()];
     s.projects = vec![("cce28b9f-0000-4000-8000-000000000001".into(), "CardTestFix".into())];
     s.drives = vec![
@@ -114,17 +116,35 @@ fn snapshot() -> Snapshot {
     s
 }
 
+/// Two 25 fps UHD XAVC clips, 11:30 and 15:43 local time on 30/04/2011.
+fn summary() -> crate::cardinfo::Summary {
+    use crate::probe::{Clip, MediaInfo, Probe, ProbedFile, Role};
+    let local = |h: i64, m: i64| {
+        // 2011-04-30 hh:mm in the machine's zone (the test reads it back in local time).
+        let utc = crate::time::days_from_civil(2011, 4, 30) * 86_400 + h * 3600 + m * 60;
+        let (_, _, _, lh, lm, _) = crate::time::local(utc);
+        utc - ((lh as i64 * 60 + lm as i64) - (h * 60 + m)) * 60
+    };
+    let info = || MediaInfo { fps: Some("25/1".into()), width: Some(3840), height: Some(2160), codec: Some("h264".into()), profile: Some("High".into()), ..Default::default() };
+    let f = |rel: &str, t: i64, clip: usize| ProbedFile { rel: rel.into(), abs: PathBuf::new(), size: 25_001_000, mtime: t, role: Role::Media, clip: Some(clip) };
+    let p = Probe {
+        root: PathBuf::new(),
+        files: vec![f("PRIVATE/M4ROOT/CLIP/C0001.MP4", local(11, 30), 0), f("PRIVATE/M4ROOT/CLIP/C0002.MP4", local(15, 43), 1)],
+        clips: vec![Clip { file: 0, info: info() }, Clip { file: 1, info: info() }],
+        total_bytes: 50_002_000,
+    };
+    crate::cardinfo::summarize(&p)
+}
+
 fn preview(path: &Path) -> Preview {
     let _ = path;
     Preview {
-        files: vec![
-            ("PRIVATE/M4ROOT/CLIP/C0001.MP4".into(), "clip", 50_000_000),
-            ("PRIVATE/M4ROOT/CLIP/C0001M01.XML".into(), "sidecar", 2_000),
-        ],
+        summary: summary(),
         total: 50_002_000,
         camera: Ok("sony-a7siii".into()),
         shoot: Some(("2011-04-30".into(), "earliest file modification time".into())),
         model_hint: Some("ILCE-7M3 (clip sidecar XML)".into()),
+        mixed: Vec::new(),
     }
 }
 
@@ -155,14 +175,14 @@ fn to_targets_row(app: &mut App, row: usize) {
 fn dashboard_then_ingest_and_back() {
     let mut app = App::new(snapshot(), Vec::new());
     let s = screen(&app, 150, 42, "dashboard");
-    for want in ["MAGVAULT  ·  Dashboard", "1 Modules", "[i] Ingest", "[s] Server dashboard", "2 Server", "● server ready", "3 Local media", "4 Recent activity", "Next", "1 card(s) detected. Press i to ingest.", "q quit"] {
+    for want in ["MAGVAULT  ·  Dashboard", "1 Modules", "[i] Ingest", "[h] Server dashboard", "[s] Settings", "2 Server", "● server ready", "3 Local media", "4 Recent activity", "Next", "1 card(s) detected. Press i to ingest.", "q quit", "F1 help"] {
         assert!(s.contains(want), "dashboard misses {want:?}\n{s}");
     }
     let acts = press(&mut app, &[ch('i')]);
     assert!(matches!(acts.as_slice(), [Action::Refresh]));
     assert_eq!(app.screen, Screen::Ingest);
     let s = screen(&app, 150, 42, "ingest-empty");
-    for want in ["1 Detected", "2 Files", "3 Project", "4 Details", "5 Targets", "[ p  PULL ]", "Sony A7S III", "A7SIII_128", "Next: Pick a card", "Esc back"] {
+    for want in ["1 Detected", "2 Card", "System time", "3 Project", "4 Details", "5 Targets", "[ p  PULL ]", "Sony A7S III", "A7SIII_128", "Next: Pick a card", "←→ pane", "F1 help", "Esc dashboard"] {
         assert!(s.contains(want), "ingest misses {want:?}\n{s}");
     }
     // q does not quit outside the dashboard; Esc returns; q quits there.
@@ -182,20 +202,25 @@ fn dashboard_then_ingest_and_back() {
 fn one_card_selected_then_pull_uses_the_cli_arguments() {
     let mut app = in_ingest_with_card();
     let s = screen(&app, 150, 42, "ingest-card");
-    assert!(s.contains("● selected"), "{s}");
-    assert!(s.contains(" C0001.MP4  [clip]"), "{s}");
-    assert!(!s.contains("PRIVATE/M4ROOT/CLIP/C0001.MP4"), "full card paths only with d\n{s}");
+    assert!(s.contains("· selected"), "{s}");
+    for want in ["Shoot date   30/04/2011  11:30 – 15:43", "Clips        2", "Total size   50.0 MB", "Frame rate   25 fps", "Resolution   4K", "GOP          long-GOP", "Dump status  ● not dumped"] {
+        assert!(s.contains(want), "card summary misses {want:?}\n{s}");
+    }
+    assert!(!s.contains("C0001.MP4"), "no file list\n{s}");
     assert!(!s.contains("/media/op/"), "mount paths only with d\n{s}");
-    assert!(s.contains("2011-04-30   guessed"), "{s}");
-    assert!(s.contains("missing: project"), "{s}");
+    assert!(s.contains("Shoot day  30/04/2011  guessed"), "{s}");
+    assert!(s.contains("✗ project"), "{s}");
     // Without a project, p explains what is missing and starts nothing.
     assert!(press(&mut app, &[ch('p')]).is_empty());
     assert!(matches!(&app.popup, Some(Popup::Message(m)) if m.join(" ").contains("project")));
     press(&mut app, &[key(KeyCode::Esc)]);
-    // Project pane: pick the open project.
-    press(&mut app, &[key(KeyCode::Tab), key(KeyCode::Tab), key(KeyCode::Enter)]);
+    // Project pane (→ →): Enter opens the dropdown, Enter picks the open project.
+    press(&mut app, &[key(KeyCode::Right), key(KeyCode::Right), key(KeyCode::Enter)]);
+    assert!(matches!(&app.popup, Some(Popup::Picker { items, .. }) if items[0] == "CardTestFix" && items[1] == "+ new project…"), "{:?}", app.popup);
+    press(&mut app, &[key(KeyCode::Enter)]);
     assert!(app.missing().is_empty(), "{:?}", app.missing());
-    assert!(screen(&app, 120, 36, "ingest-ready").contains("✓ ready to pull"));
+    let s = screen(&app, 120, 36, "ingest-ready");
+    assert!(s.contains("Ready: press p to pull.") && s.contains("✓ project  ✓ shoot day  ✓ target"), "{s}");
     let acts = press(&mut app, &[ch('p')]);
     let [Action::Pull(a)] = acts.as_slice() else { panic!("{acts:?}") };
     assert_eq!(a.base.source, PathBuf::from("/media/op/A7SIII_128"));
@@ -329,7 +354,7 @@ fn clean_not_offered_while_pending_offered_when_synced() {
     app.needs_sudo = false;
     press(&mut app, &[ch('i')]);
     let shown = screen(&app, 150, 42, "clean-pending");
-    assert!(shown.contains("Field set       TESTSET1  320.0 GB · valid · 1 pending sync"), "{shown}");
+    assert!(shown.contains("USB set         TESTSET1  master + slave 320.0 GB · valid · 1 pending sync"), "{shown}");
     assert!(!shown.contains("c Clean ]"), "{shown}");
     to_targets_row(&mut app, 2);
     assert!(press(&mut app, &[ch('c')]).is_empty());
@@ -383,9 +408,12 @@ fn details_pickers_offer_profile_values_only_and_new_project() {
         press(&mut app, &[ch(c)]);
     }
     press(&mut app, &[key(KeyCode::Enter)]);
+    assert!(matches!(&app.popup, Some(Popup::Requirements { .. })), "a new project asks for its requirements");
+    press(&mut app, &[key(KeyCode::Enter)]); // none
     let acts = press(&mut app, &[ch('p')]);
     let [Action::Pull(a)] = acts.as_slice() else { panic!("{acts:?}") };
     assert_eq!((a.base.project.as_deref(), a.base.project_id.as_deref()), (Some("Night"), None));
+    assert!(a.base.requirements.is_none());
     assert_eq!(a.base.shoot_date.as_deref(), Some("2026-11-20"));
     assert_eq!(a.base.format.as_deref(), Some("ProRes RAW"));
 }
@@ -450,4 +478,139 @@ fn plain_wording_hides_paths_uuids_devices() {
     let raw = format!("Mag {F1} copied to /home/op/mvclient/staging/{F1} from /dev/sdd1 (project cce28b9f-0000-4000-8000-000000000001).");
     assert_eq!(scrub(&raw, false), "Mag mag 2026-11-26 copied to mag 2026-11-26 from drive (project …).");
     assert_eq!(scrub(&raw, true), raw);
+}
+
+#[test]
+fn arrows_move_panes_and_f1_helps_on_every_screen() {
+    let mut app = App::new(snapshot(), Vec::new());
+    press(&mut app, &[key(KeyCode::F(1))]);
+    let s = screen(&app, 150, 42, "help-dashboard");
+    assert!(s.contains("Help · Dashboard") && s.contains("h Server dashboard") && s.contains("←→ / Tab"), "{s}");
+    press(&mut app, &[key(KeyCode::Esc)]);
+    assert!(app.popup.is_none());
+    // h: the server dashboard (its own key); s: Settings.
+    press(&mut app, &[ch('h')]);
+    assert_eq!(app.screen, Screen::Stub(super::app::Stub::ServerDashboard));
+    press(&mut app, &[key(KeyCode::Esc), ch('s')]);
+    assert_eq!(app.screen, Screen::Stub(super::app::Stub::Settings));
+    press(&mut app, &[key(KeyCode::Esc), ch('i')]);
+    assert_eq!(app.pane, Pane::Detected);
+    press(&mut app, &[key(KeyCode::Right)]);
+    assert_eq!(app.pane, Pane::Card);
+    press(&mut app, &[key(KeyCode::Right), key(KeyCode::Right), key(KeyCode::Right)]);
+    assert_eq!(app.pane, Pane::Targets);
+    press(&mut app, &[key(KeyCode::Right)]);
+    assert_eq!(app.pane, Pane::Detected, "wraps");
+    press(&mut app, &[key(KeyCode::Left)]);
+    assert_eq!(app.pane, Pane::Targets);
+    press(&mut app, &[key(KeyCode::F(1))]);
+    let s = screen(&app, 150, 42, "help-ingest");
+    assert!(s.contains("Help · Ingest") && s.contains("red not dumped") && s.contains("While pulling: x aborts"), "{s}");
+}
+
+#[test]
+fn requirements_warning_is_shown_and_new_project_carries_them() {
+    // Existing project requires HD; the card is 4K: warning, not a stop.
+    let mut s = snapshot();
+    s.requirements.insert("cce28b9f-0000-4000-8000-000000000001".into(), crate::cardinfo::Requirements::parse("fps=25 res=HD"));
+    let mut app = App::new(s, Vec::new());
+    press(&mut app, &[ch('i'), key(KeyCode::Enter)]);
+    let path = PathBuf::from("/media/op/A7SIII_128");
+    app.set_preview(path.clone(), Ok(preview(&path)));
+    press(&mut app, &[key(KeyCode::Right), key(KeyCode::Right), key(KeyCode::Enter), key(KeyCode::Enter)]);
+    let sc = screen(&app, 150, 42, "requirements-warning");
+    for want in ["Requires   25 fps · HD", "Camera footage does not meet project", "Not a hard stop. Logged to the project.", "Resolution   4K  (project requires HD)"] {
+        assert!(sc.contains(want), "misses {want:?}\n{sc}");
+    }
+    assert!(sc.contains("Frame rate   25 fps") && !sc.contains("project requires 25 fps"), "{sc}");
+    assert!(app.missing().is_empty(), "not a hard stop");
+    assert!(screen(&app, 120, 36, "requirements-warning-small").contains("Camera footage does not meet"));
+    // A new project: requirements from the fixed lists (→ cycles: none, 24, 25 …).
+    press(&mut app, &[ch('n')]);
+    for c in "Night".chars() {
+        press(&mut app, &[ch(c)]);
+    }
+    press(&mut app, &[key(KeyCode::Enter), key(KeyCode::Right), key(KeyCode::Right), key(KeyCode::Down), key(KeyCode::Left)]);
+    let sc = screen(&app, 150, 42, "requirements-popup");
+    assert!(sc.contains("Frame rate  ◀ 25 fps ▶") && sc.contains("Resolution  ◀ SD ▶"), "{sc}");
+    press(&mut app, &[key(KeyCode::Enter)]);
+    let acts = press(&mut app, &[ch('p')]);
+    let [Action::Pull(a)] = acts.as_slice() else { panic!("{acts:?}") };
+    assert_eq!(a.base.requirements.map(|r| r.render()).as_deref(), Some("fps=25 res=SD"));
+}
+
+#[test]
+fn mixed_camera_card_asks_before_pull() {
+    let mut app = in_ingest_with_card();
+    let path = PathBuf::from("/media/op/A7SIII_128");
+    let mut p = preview(&path);
+    p.mixed = vec!["ILCE-7M3".into(), "FDR-AX53".into()];
+    app.set_preview(path, Ok(p));
+    press(&mut app, &[key(KeyCode::Right), key(KeyCode::Right), key(KeyCode::Enter), key(KeyCode::Enter)]);
+    assert!(screen(&app, 150, 42, "mixed-card").contains("More than one camera on this card: ILCE-7M3, FDR-AX53"));
+    assert!(press(&mut app, &[ch('p')]).is_empty(), "never pulled silently");
+    let s = screen(&app, 150, 42, "mixed-popup");
+    assert!(s.contains("This card holds clips from more than one camera: ILCE-7M3, FDR-AX53."), "{s}");
+    assert!(press(&mut app, &[key(KeyCode::Esc)]).is_empty());
+    assert!(app.popup.is_none());
+    let acts = press(&mut app, &[ch('p'), key(KeyCode::Enter)]);
+    let [Action::Pull(a)] = acts.as_slice() else { panic!("{acts:?}") };
+    assert!(a.base.mixed_ok);
+}
+
+#[test]
+fn dump_colours_staging_bar_and_clock() {
+    use crate::staging::DumpStatus;
+    let mut s = snapshot();
+    s.cards = vec![card("A7SIII_128"), card("RED_256"), card("GENERIC_64")];
+    s.dump = vec![DumpStatus::Safe { copies: 2 }, DumpStatus::Dumped { copies: 1, server: false }, DumpStatus::NotDumped];
+    s.staging_usage = (122_000_000_000, 258_000_000_000);
+    s.staging_synced = vec![F1.into()];
+    let mut app = App::new(s, Vec::new());
+    app.clock = Some(crate::time::days_from_civil(2026, 11, 28) * 86_400 + 12 * 3600);
+    press(&mut app, &[ch('i')]);
+    let sc = screen(&app, 150, 42, "dump-colours");
+    for want in ["● 2 copies · on server", "● dumped · not yet safe", "● not dumped", "122.0 GB used / 258.0 GB free", "1 on server, kept", "No field backup selected: keep the card until the server confirms.  ·  Staging auto-cleans after two backups (can be disabled).", "28/11/2026"] {
+        assert!(sc.contains(want), "misses {want:?}\n{sc}");
+    }
+    assert!(sc.contains("██████"), "space bar\n{sc}");
+    // Colours: red, yellow, green dots.
+    let mut t = Terminal::new(TestBackend::new(150, 42)).unwrap();
+    t.draw(|f| view::draw(f, &app)).unwrap();
+    let buf = t.backend().buffer();
+    let mut dots = Vec::new();
+    for y in 0..42 {
+        for x in 0..34 {
+            let c = buf.cell((x, y)).unwrap();
+            if c.symbol() == "●" {
+                dots.push(c.fg);
+            }
+        }
+    }
+    use ratatui::style::Color;
+    assert_eq!(dots, vec![Color::Green, Color::Yellow, Color::Red], "{dots:?}");
+    app.snap.autoclean = false;
+    assert!(screen(&app, 150, 42, "autoclean-off").contains("Staging auto-clean is off."));
+    app.snap.autoclean = true;
+    app.use_set = Some("X".into()); // a set target: no warning, the full rule
+    app.snap.sets = vec![set("X", None)];
+    app.snap.drives.truncate(1);
+    assert!(screen(&app, 150, 42, "autoclean-note").contains("Staging auto-cleans once two backups exist. Can be disabled. Never cleaned if it is the only copy."));
+    assert!(screen(&app, 150, 42, "log-visible").contains("┌ Log"), "the Log fits at 150x42 with four targets");
+}
+
+#[test]
+fn inline_pull_locks_inputs_and_x_aborts() {
+    use crate::out::Msg;
+    let mut app = in_ingest_with_card();
+    app.start_pull("Pull A7SIII_128");
+    app.job_msg(Msg::Progress { label: "copying".into(), done: 18_200_000, total: 42_700_000 });
+    let s = screen(&app, 150, 42, "pull-inline");
+    for want in ["Ingesting", "x ABORT", "18.2 MB / 42.7 MB  (43%)", "✓ hash", "● copy", "○ verify", "Inputs locked until verified", "x abort ingest", "2 Card"] {
+        assert!(s.contains(want), "misses {want:?}\n{s}");
+    }
+    assert!(press(&mut app, &[ch('p'), key(KeyCode::Esc), key(KeyCode::Right)]).is_empty());
+    assert_eq!(app.pane, Pane::Detected, "inputs locked");
+    assert!(matches!(press(&mut app, &[ch('x')]).as_slice(), [Action::Cancel]));
+    assert!(screen(&app, 120, 36, "pull-aborting").contains("aborting…"));
 }

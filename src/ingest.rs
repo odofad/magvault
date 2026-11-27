@@ -23,6 +23,7 @@
 //! The same blocks are used by client ingest (`client_ingest.rs`, Phase 1) and by the
 //! server commit of client uploads (`serve.rs`).
 
+use crate::cardinfo::{self, Check, Requirements, Summary};
 use crate::catalog::{card_from_record, MagRecord};
 use crate::config::{self, Config};
 use crate::db::{self, Db, Value};
@@ -43,7 +44,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Args {
     pub source: PathBuf,
     pub project: Option<String>,
@@ -58,6 +59,11 @@ pub struct Args {
     /// from the card (and is used for the camera guess like one).
     pub model: Option<String>,
     pub yes: bool,
+    /// `--require-fps / --require-resolution / --require-gop`: requirements of a NEW
+    /// project (PLAN.md "Project requirements warning"; set at project creation).
+    pub requirements: Option<Requirements>,
+    /// `--mixed-ok`: the operator accepts a card whose clips name more than one camera.
+    pub mixed_ok: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +76,8 @@ pub enum ProjectChoice {
     New {
         id: String,
         name: String,
+        /// Fixed requirements chosen at creation (empty = none).
+        req: Requirements,
     },
 }
 
@@ -93,6 +101,9 @@ impl ProjectChoice {
     pub fn summary_line(&self) -> String {
         match self {
             ProjectChoice::Existing { name, id, .. } => format!("{name} [{id}]"),
+            ProjectChoice::New { name, req, .. } if !req.is_empty() => {
+                format!("{name}  (NEW project, UUID assigned on commit; requires {})", req.display())
+            }
             ProjectChoice::New { name, .. } => {
                 format!("{name}  (NEW project, UUID assigned on commit)")
             }
@@ -118,6 +129,37 @@ pub struct Details {
     /// Model hint (live-media metadata or --model) with its source, stored on the mag card
     /// as `camera_model_hint`. Not the camera profile; the operator confirms it.
     pub model_hint: Option<String>,
+    /// Models named by live media when the card holds clips of more than one camera
+    /// (empty otherwise). One mag is one camera: ingest warns and asks.
+    pub mixed: Vec<String>,
+}
+
+/// Extra mag card header keys written at ingest (kept by reconcile).
+#[derive(Debug, Clone, Default)]
+pub struct CardExtras {
+    /// `camera_model_hint`
+    pub model_hint: Option<String>,
+    /// `project_requirements`: a new project's requirements, so the server creates the
+    /// project with them.
+    pub project_requirements: Option<String>,
+    /// `requirements_warning`: what did not meet the project's requirements at ingest.
+    pub requirements_warning: Option<String>,
+    /// `mixed_cameras`: the operator accepted a card with clips of several cameras.
+    pub mixed_cameras: Option<String>,
+}
+
+impl CardExtras {
+    pub fn new(d: &Details, project: &ProjectChoice, check: &Check) -> CardExtras {
+        CardExtras {
+            model_hint: d.model_hint.clone(),
+            project_requirements: match project {
+                ProjectChoice::New { req, .. } if !req.is_empty() => Some(req.render()),
+                _ => None,
+            },
+            requirements_warning: (!check.ok()).then(|| check.line().replace('|', "/")),
+            mixed_cameras: (!d.mixed.is_empty()).then(|| d.mixed.join(", ").replace('|', "/")),
+        }
+    }
 }
 
 /// One file of a new mag as it goes into the manifest, the database and the MHL.
@@ -235,9 +277,11 @@ pub fn choose_details(
     cams: &[CameraProfile],
     src: &Path,
 ) -> Result<Details> {
+    let card_hints = crate::camera_meta::read(probe);
+    let mixed: Vec<String> = if card_hints.len() > 1 { card_hints.iter().map(|h| h.model.clone()).collect() } else { Vec::new() };
     let hints = match &a.model {
         Some(m) => vec![crate::camera_meta::Hint { model: crate::camera_meta::normalise(m), source: "given by the operator" }],
-        None => crate::camera_meta::read(probe),
+        None => card_hints,
     };
     let model_hint = crate::camera_meta::describe(&hints).map(|h| h.replace('|', "/"));
     if let Some(h) = &model_hint {
@@ -287,7 +331,70 @@ pub fn choose_details(
         notes,
         source_label,
         model_hint,
+        mixed,
     })
+}
+
+/// One mag is one camera (PLAN.md "Mag rules"). A card whose live media names more than
+/// one camera is never ingested silently: the operator is warned and asked; `--yes`
+/// refuses unless `--mixed-ok` is given.
+pub fn confirm_mixed(a: &Args, d: &Details) -> Result<()> {
+    if d.mixed.is_empty() {
+        return Ok(());
+    }
+    let msg = format!(
+        "this card holds clips from more than one camera ({}); one mag is one camera, and the whole card would become one mag labelled {}",
+        d.mixed.join(", "),
+        d.cam.name
+    );
+    if a.mixed_ok {
+        crate::say!("WARNING: {msg} (accepted with --mixed-ok)");
+        return Ok(());
+    }
+    if a.yes {
+        crate::bail!("{msg}. Nothing copied. Split the card by camera, or pass --mixed-ok to ingest it as one mag anyway.");
+    }
+    crate::say!("WARNING: {msg}.");
+    if !util::confirm("Ingest the whole card as one mag anyway?")? {
+        crate::bail!("cancelled (mixed cameras); nothing was written");
+    }
+    Ok(())
+}
+
+/// The project's requirements and how the card compares (PLAN.md "Project requirements
+/// warning"). Not a hard stop.
+pub fn check_requirements(req: &Requirements, probe: &Probe) -> (Summary, Check) {
+    let s = cardinfo::summarize(probe);
+    let c = req.check(&s);
+    (s, c)
+}
+
+/// Summary lines for the confirmation: the card's frame rate / resolution / GOP and, when
+/// the project has requirements, the result.
+pub fn requirement_lines(req: &Requirements, s: &Summary, c: &Check) -> Vec<String> {
+    let mut v = vec![format!("card        {} · {} · {}", s.fps_label(), s.res_label(), s.gop_label())];
+    if !req.is_empty() {
+        v.push(format!("requires    {}", req.display()));
+        if c.ok() {
+            v.push("            card meets the project requirements".to_string());
+        } else {
+            v.push(format!("WARNING     {} ({}). Not a hard stop; logged to the project.", cardinfo::WARNING, c.line()));
+        }
+        if !c.unchecked.is_empty() {
+            v.push(format!("            not checked: {}", c.unchecked.join(", ")));
+        }
+    }
+    v
+}
+
+/// The mismatch in the project log (database) and the daily log (server side).
+pub fn log_to_project(db: &Db, log: &Log, project: &ProjectChoice, mag_id: &str, folder: &str, line: &str) {
+    let msg = format!("{} Mag {folder}: {line}", cardinfo::WARNING);
+    let _ = db.execute(
+        "INSERT INTO project_log(project_id, mag_id, at, level, message) VALUES (?1, ?2, ?3, 'WARN', ?4)",
+        &[project.id().into(), mag_id.into(), time::iso_utc(time::now_secs()).into(), msg.as_str().into()],
+    );
+    log.warn("project", &format!("project {}: {msg}", project.name()));
 }
 
 /// The confirmation summary (stderr). `extra` lines go after the project line.
@@ -690,14 +797,21 @@ pub fn write_cards(
     dir: &Path,
     rec: &MagRecord,
     camera_model: &str,
-    model_hint: Option<&str>,
+    extras: &CardExtras,
     entries: &[FileEntry],
     c4s: &[String],
 ) -> Result<()> {
     let mut card = card_from_record(rec, Some(camera_model));
-    if let Some(h) = model_hint {
-        // Extra header key (kept by reconcile); the database has no column for it yet.
-        card.set("camera_model_hint", h);
+    // Extra header keys (kept by reconcile); the database has no columns for them.
+    for (k, v) in [
+        ("camera_model_hint", &extras.model_hint),
+        ("mixed_cameras", &extras.mixed_cameras),
+        ("project_requirements", &extras.project_requirements),
+        ("requirements_warning", &extras.requirements_warning),
+    ] {
+        if let Some(v) = v {
+            card.set(k, v.as_str());
+        }
     }
     atomic_write(&dir.join(magcard::FILE_NAME), card.render()?.as_bytes())?;
     let mhl_entries: Vec<mhl::Entry> = entries
@@ -734,10 +848,11 @@ pub fn commit_db(
     let res = (|| -> Result<()> {
         let seq = db.next_seq()?;
         let now_iso = rec.ingested_at.as_str();
-        if let ProjectChoice::New { id, name } = project {
+        if let ProjectChoice::New { id, name, req } = project {
+            let r = req.render();
             db.execute(
-                "INSERT INTO projects(id, name, status, created_at, updated_at, seq) VALUES (?1, ?2, 'open', ?3, ?3, ?4)",
-                &[id.into(), name.into(), now_iso.into(), seq.into()],
+                "INSERT INTO projects(id, name, status, created_at, updated_at, seq, requirements) VALUES (?1, ?2, 'open', ?3, ?3, ?4, ?5)",
+                &[id.into(), name.into(), now_iso.into(), seq.into(), Value::from(Some(r.as_str()).filter(|r| !r.is_empty()))],
             )?;
         }
         db.execute(
@@ -881,27 +996,24 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
     let probe = probe_source(&src)?;
     let d = choose_details(&a, &probe, &cams, &src)?;
     let project = choose_project(&db, &a)?;
-    print_summary(
-        &src,
-        &probe,
-        &a,
-        &d,
-        &project,
-        &[
-            format!(
-                "proxy       320p job queued with profile {} (not encoded in Phase 0)",
-                proxy_profile.id
-            ),
-            format!(
-                "destination {}/{}_<new uuid>/",
-                cfg.paths.mags.display(),
-                d.shoot_date.replace('-', "")
-            ),
-        ],
-    );
+    let req = project_requirements(&db, &project)?;
+    let (summary, check) = check_requirements(&req, &probe);
+    let mut extra = requirement_lines(&req, &summary, &check);
+    extra.push(format!(
+        "proxy       320p job queued with profile {} (not encoded in Phase 0)",
+        proxy_profile.id
+    ));
+    extra.push(format!(
+        "destination {}/{}_<new uuid>/",
+        cfg.paths.mags.display(),
+        d.shoot_date.replace('-', "")
+    ));
+    print_summary(&src, &probe, &a, &d, &project, &extra);
+    confirm_mixed(&a, &d)?;
     if !a.yes && !util::confirm("Pull (verified copy) with these values?")? {
         crate::bail!("cancelled; nothing was written");
     }
+    let extras = CardExtras::new(&d, &project, &check);
 
     // ---- after confirmation: every failure is cleaned up and logged as ERROR ------------
     interrupt::install();
@@ -924,7 +1036,7 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
         interrupt::check()?;
         let rec = build_record(&folder, &mag_uuid, &project, &d, &entries);
         let c4s: Vec<String> = hashes.iter().map(|h| h.c4.clone()).collect();
-        write_cards(&st.dir, &rec, &d.cam.name, d.model_hint.as_deref(), &entries, &c4s)?;
+        write_cards(&st.dir, &rec, &d.cam.name, &extras, &entries, &c4s)?;
         // Last point where a stop signal is honoured. From here the rename into mags/ and the
         // database commit run to the end; a signal arriving now is held off (PLAN.md Threat model).
         interrupt::check()?;
@@ -942,6 +1054,15 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
     })();
     if let Some(st) = staged {
         st.finish(result.is_ok());
+    }
+    if let Ok(folder) = &result {
+        if !check.ok() {
+            crate::say!("WARNING: {} {}; logged to project {}", cardinfo::WARNING, check.line(), project.name());
+            log_to_project(&db, &log, &project, &folder[9..], folder, &check.line());
+        }
+        if !d.mixed.is_empty() {
+            log.warn("ingest", &format!("Mag {folder}: card held clips of several cameras ({}); ingested as one mag", d.mixed.join(", ")));
+        }
     }
     let media_count = probe.clips.len();
     match result {
@@ -1167,11 +1288,13 @@ pub fn choose_project(db: &Db, a: &Args) -> Result<ProjectChoice> {
                 );
             }
         }
-        return Ok(ProjectChoice::Existing {
+        let p = ProjectChoice::Existing {
             id: row[0].s(),
             name: row[1].s(),
             status: row[2].s(),
-        });
+        };
+        let current = project_requirements(db, &p)?;
+        return with_requirements(p, a, &current);
     }
     let name = project_name_arg(a)?;
     let rows = db.query(
@@ -1182,7 +1305,35 @@ pub fn choose_project(db: &Db, a: &Args) -> Result<ProjectChoice> {
         .into_iter()
         .map(|r| (r[0].s(), r[1].s(), r[2].s()))
         .collect();
-    pick_project(&name, &rows)
+    let p = pick_project(&name, &rows)?;
+    let current = project_requirements(db, &p)?;
+    with_requirements(p, a, &current)
+}
+
+/// Requirements stored for a project (a new one: what it is created with).
+pub fn project_requirements(db: &Db, p: &ProjectChoice) -> Result<Requirements> {
+    match p {
+        ProjectChoice::New { req, .. } => Ok(*req),
+        ProjectChoice::Existing { id, .. } => Ok(db
+            .query_one("SELECT requirements FROM projects WHERE id = ?1", &[id.as_str().into()])?
+            .and_then(|r| r[0].text().map(Requirements::parse))
+            .unwrap_or_default()),
+    }
+}
+
+/// `--require-*` flags: they set a new project's requirements. An existing project keeps
+/// its own (set at creation); different flags are refused rather than ignored.
+pub fn with_requirements(p: ProjectChoice, a: &Args, current: &Requirements) -> Result<ProjectChoice> {
+    match (p, &a.requirements) {
+        (ProjectChoice::New { id, name, .. }, Some(r)) => Ok(ProjectChoice::New { id, name, req: *r }),
+        (p @ ProjectChoice::Existing { .. }, Some(r)) if r != current => Err(Error(format!(
+            "project {} already exists with requirements {}; requirements are set when a project is created (given: {})",
+            p.name(),
+            current.display(),
+            r.display()
+        ))),
+        (p, _) => Ok(p),
+    }
 }
 
 pub fn project_name_arg(a: &Args) -> Result<String> {
@@ -1204,7 +1355,7 @@ pub fn pick_project(name: &str, rows: &[(String, String, String)]) -> Result<Pro
     let open: Vec<_> = rows.iter().filter(|r| r.2 == "open").collect();
     match open.as_slice() {
         [one] => Ok(ProjectChoice::Existing { id: one.0.clone(), name: one.1.clone(), status: "open".into() }),
-        [] if rows.is_empty() => Ok(ProjectChoice::New { id: util::uuid_v4()?, name: name.to_string() }),
+        [] if rows.is_empty() => Ok(ProjectChoice::New { id: util::uuid_v4()?, name: name.to_string(), req: Requirements::default() }),
         [] => Err(Error(format!(
             "project {name:?} exists but is closed; closed projects are hidden from ingest. Use another name or reopen it first."
         ))),

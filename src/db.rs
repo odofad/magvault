@@ -297,7 +297,7 @@ fn first_line(s: &str) -> &str {
     s.trim().lines().next().unwrap_or("")
 }
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Create tables if missing. Safe to run on every start.
 pub fn ensure_schema(db: &Db) -> Result<()> {
@@ -305,10 +305,26 @@ pub fn ensure_schema(db: &Db) -> Result<()> {
     db.exec(SCHEMA)?;
     db.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)", &[SCHEMA_VERSION.to_string().into()])?;
     db.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('catalog_seq', '0')", &[])?;
-    let v = db
+    let mut v = db
         .query_one("SELECT value FROM meta WHERE key = 'schema_version'", &[])?
         .and_then(|r| r[0].int())
         .unwrap_or(0);
+    if v == 1 {
+        // 1 → 2: project requirements and the project log (PLAN.md "Project requirements
+        // warning"). project_log comes from SCHEMA above.
+        db.begin()?;
+        let r = db
+            .exec("ALTER TABLE projects ADD COLUMN requirements TEXT;")
+            .and_then(|_| db.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'", &[]).map(|_| ()));
+        match r {
+            Ok(()) => db.commit()?,
+            Err(e) => {
+                db.rollback();
+                return Err(e);
+            }
+        }
+        v = 2;
+    }
     if v != SCHEMA_VERSION {
         crate::bail!("database schema version {v} is not supported by this build (expects {SCHEMA_VERSION})");
     }
@@ -329,7 +345,17 @@ CREATE TABLE IF NOT EXISTS projects (
   status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL,
-  seq             INTEGER NOT NULL DEFAULT 0
+  seq             INTEGER NOT NULL DEFAULT 0,
+  requirements    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS project_log (
+  id          INTEGER PRIMARY KEY,
+  project_id  TEXT NOT NULL REFERENCES projects(id),
+  mag_id      TEXT,
+  at          TEXT NOT NULL,
+  level       TEXT NOT NULL CHECK (level IN ('INFO','WARN','ERROR')),
+  message     TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS mags (
@@ -541,6 +567,7 @@ mod tests {
         let db = Db::open(&path).unwrap();
         ensure_schema(&db).unwrap();
         ensure_schema(&db).unwrap(); // idempotent
+        db.execute("INSERT INTO projects(id,name,status,created_at,updated_at,requirements) VALUES ('p0','R','open','t','t','fps=25')", &[]).unwrap();
         db.execute(
             "INSERT INTO projects(id,name,status,created_at,updated_at) VALUES (?1,?2,'open',?3,?3)",
             &["p1".into(), "Name with 'quote' | pipe".into(), "2026-01-01T00:00:00Z".into()],
@@ -558,6 +585,26 @@ mod tests {
                 &[]
             )
             .is_err());
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn schema_1_is_upgraded() {
+        let dir = std::env::temp_dir().join(format!("mv-db-up-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.sqlite");
+        let _ = std::fs::remove_file(&path);
+        let db = Db::open(&path).unwrap();
+        db.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, season_or_year TEXT, notes TEXT,
+                   status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, seq INTEGER NOT NULL DEFAULT 0);
+                 INSERT INTO meta VALUES ('schema_version','1');
+                 INSERT INTO projects(id,name,status,created_at,updated_at) VALUES ('p1','Old','open','t','t');").unwrap();
+        ensure_schema(&db).unwrap();
+        db.execute("UPDATE projects SET requirements = 'res=HD' WHERE id = 'p1'", &[]).unwrap();
+        db.execute("INSERT INTO project_log(project_id, at, level, message) VALUES ('p1','t','WARN','x')", &[]).unwrap();
+        assert_eq!(db.query_one("SELECT value FROM meta WHERE key='schema_version'", &[]).unwrap().unwrap()[0].s(), "2");
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

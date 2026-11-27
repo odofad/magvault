@@ -76,7 +76,7 @@ expect_fail "client command refused in server config" "is a client command" ms s
 
 echo "== help"
 top=$("$MV" --help)
-for c in init ingest reconcile serve gate cards sync usb projects ui; do grep -qE "^  $c +" <<<"$top" || fail "--help misses $c"; done
+for c in init ingest reconcile serve gate cards sync usb projects project-log staging ui; do grep -qE "^  $c +" <<<"$top" || fail "--help misses $c"; done
 grep -qE -- "--(project|camera|via|device|spool|verify-hashes|once|scan-root)" <<<"$top" && { echo "$top"; fail "--help dumps command flags"; }
 [ "$(wc -l <<<"$top")" -lt 40 ] || fail "--help is long ($(wc -l <<<"$top") lines)"
 pass "magvault --help: commands only, grouped, no flag lists"
@@ -158,12 +158,16 @@ grep -q "^ok  *$XF" <<<"$(ms reconcile "$XF")" || fail "reconcile FX6 mag (hint 
 grep -qx "camera_model_hint: ILME-FX6V (clip sidecar XML)" "$SRV/mags/$XF/magcard.txt" || fail "reconcile dropped the hint"
 pass "FX6: 2 clips + 2 paired M01.XML sidecars, SALVAGE.TMP copied, sony-ilme-fx6 from hint ILME-FX6V (on the card)"
 
-echo "== client ingest: card → local staging → server → autoclean"
+echo "== client ingest: card → local staging → server; staging kept (one backup)"
 mc ingest --scan-root "$ONE" "${ING[@]}" > "$W/i1.out" 2> "$W/i1.err" </dev/null || { cat "$W/i1.err"; fail "ingest via staging"; }
 F1=$(awk '/^ingested /{print $2}' "$W/i1.out")
 grep -q "server  committed" "$W/i1.out" || { cat "$W/i1.out" "$W/i1.err"; fail "not committed"; }
 [ -d "$SRV/mags/$F1" ] || fail "mag not in server mags/"
-[ ! -e "$CLI/staging/$F1" ] || fail "staging not autocleaned"
+[ -d "$CLI/staging/$F1" ] || fail "staging cleaned with only the server as backup"
+grep -q "  staging kept" "$W/i1.out" || { cat "$W/i1.out"; fail "staging state not reported"; }
+grep -q "local staging copy kept: on the server; kept in staging until a second backup exists" "$W/i1.err" || { cat "$W/i1.err"; fail "kept reason"; }
+grep -qx "$F1" "$CLI/staging/.magvault/synced" || fail "staged mag not marked on the server"
+grep -q "^[0-9a-f]\{64\} | $F1 | server | -$" "$CCFG/dumps.txt" || { cat "$CCFG/dumps.txt"; fail "dump ledger"; }
 [ "$(sql "select status, ingested_by like '%@%' from mags where folder='$F1'")" = "online|1" ] || fail "server DB row"
 [ "$(sql "select count(*) from encoder_jobs e join mags m on m.id=e.mag_id where m.folder='$F1' and e.status='queued'")" = 1 ] || fail "320p job"
 [ "$(sql "select count(*) from encoder_job_clips jc join encoder_jobs e on e.id=jc.job_id join mags m on m.id=e.mag_id where m.folder='$F1'")" = "$(sql "select count(*) from clips c join mags m on m.id=c.mag_id where m.folder='$F1'")" ] || fail "client mag: job clip links"
@@ -171,7 +175,7 @@ grep -q "^ok  *$F1" <<<"$(ms reconcile "$F1")" || fail "server reconcile of clie
 grep -q "INFO   ingest    Mag $F1 committed from client dit-a" "$SRV"/logs/*.log || fail "server log"
 grep -q "Mag $F1 committed on the server" "$CLI"/logs/*.log || fail "client log"
 [ -z "$(ls -A "$SRV/mags/.incoming/.clients/dit-a" | grep -v "^\.client-log")" ] || fail "spool not empty after commit"
-pass "card picked by discovery (no TTY), staged, verified, committed by serve (job linked to clips), staging cleaned, logged on both sides"
+pass "card picked by discovery (no TTY), staged, verified, committed by serve (job linked to clips), staging kept until a second backup, logged on both sides"
 
 echo "== TUI (a bot at the keyboard in a pseudo-terminal): dashboard → Ingest → pull → back"
 cat > "$W/tui1.script" <<'TUI'
@@ -183,13 +187,17 @@ wait A7SIII_128
 # Enter picks the one card; the probe fills Files and Details.
 send \r
 wait probe done
+wait Shoot date   20/11/2026
+wait Frame rate   25 fps
 send nTuiTest\r
+wait New project  TuiTest
+send \r
 wait TuiTest  (new
 send p
 # The copy runs inside the TUI: progress bar with bytes and percent, no raw terminal.
 wait Pull A7SIII_128
 wait copying
-wait  %)
+wait %)
 wait Pull A7SIII_128: ingested mag
 send \e
 wait 1 Modules
@@ -198,14 +206,21 @@ exit 0
 TUI
 FAKE_RSYNC_FILE_DELAY=0.6 python3 "$REPO/tests/tui_pty.py" "$W/tui1.script" -- "$MV" --config "$CCFG" ui --scan-root "$ONE" > "$W/tui1.out" 2>&1 || { cat "$W/tui1.out"; fail "TUI pull"; }
 TF=$(sql "select m.folder from mags m join projects p on p.id=m.project_id where p.name='TuiTest'")
-[ -n "$TF" ] && [ -d "$SRV/mags/$TF" ] && [ ! -e "$CLI/staging/$TF" ] || fail "TUI pull did not commit through the client ingest path"
+[ -n "$TF" ] && [ -d "$SRV/mags/$TF" ] && [ -d "$CLI/staging/$TF" ] || fail "TUI pull did not commit through the client ingest path"
 grep -q "Mag $TF committed on the server" "$CLI"/logs/*.log || fail "TUI pull not in the client log"
-pass "TUI: card picked with Enter, new project, p pulls inside the TUI with a progress bar (committed, staging cleaned), Esc, q"
+pass "TUI: card picked with Enter, card summary (no file list), new project, p pulls inside the TUI with a progress bar (committed, staging kept), Esc, q"
 cat > "$W/tui2.script" <<'TUI'
 wait 1 Modules
 send i
 wait 1 Detected
-send \t\t\t\t
+f1
+wait Help · Ingest
+send x
+right
+right
+right
+right
+wait ║▶ [x] Local staging
 send o
 wait Mount the smaller drive first and prepare it as master.
 send \e
@@ -219,7 +234,7 @@ send q
 exit 0
 TUI
 python3 "$REPO/tests/tui_pty.py" "$W/tui2.script" -- "$MV" --config "$CCFG" ui --scan-root "$ONE" > "$W/tui2.out" 2>&1 || { cat "$W/tui2.out"; fail "TUI prepare popup"; }
-pass "TUI: Prepare popup opens with the smaller-first warning, Esc closes it; Pull refuses without a card"
+pass "TUI: F1 help, → moves to Targets, Prepare popup opens with the smaller-first warning, Esc closes it; Pull refuses without a card"
 expect_fail "ui refuses without a terminal" "the TUI needs a terminal" mc ui </dev/null
 [ "$("$MV" --config "$CCFG" </dev/null >/dev/null 2>&1; echo $?)" = 2 ] || fail "no command without a terminal should print help (exit 2)"
 
@@ -232,9 +247,10 @@ grep -q "WARN   ingest    no field-set backup" "$CLI"/logs/*.log || fail "no-bac
 [ -z "$(sql "select id from mags where folder='$F2'")" ] || fail "offline mag reached the server"
 pass "pending in local staging, warning shown and logged"
 mc sync > "$W/s1.out" 2>&1 || { cat "$W/s1.out"; fail "sync"; }
-grep -q "synced    $F2  (local staging, cleaned)" "$W/s1.out" || fail "sync output"
-[ -d "$SRV/mags/$F2" ] && [ ! -e "$CLI/staging/$F2" ] || fail "sync result"
-pass "sync: verified, committed, staging cleaned"
+grep -q "synced    $F2  (local staging)" "$W/s1.out" || { cat "$W/s1.out"; fail "sync output"; }
+grep -q "kept      $F2  (local staging: on the server; kept in staging until a second backup exists (field set))" "$W/s1.out" || { cat "$W/s1.out"; fail "kept output"; }
+[ -d "$SRV/mags/$F2" ] && [ -d "$CLI/staging/$F2" ] || fail "sync result"
+pass "sync: verified, committed, staging kept (server is one backup)"
 
 echo "== committer down: gate up, serve down → 'server up, committer down', bounded waits, client issues on the server log"
 kill "$SERVE_PID"; wait "$SERVE_PID" 2>/dev/null || true
@@ -384,7 +400,8 @@ mc ingest "$CARD" "${ING[@]}" --mirror-set --set FIELD-B --scan-root "$USB" > "$
 F6=$(awk '/^ingested /{print $2}' "$W/i6.out")
 [ -d "$SRV/mags/$F6" ] && [ ! -e "$CLI/staging/$F6" ] || fail "mirror route server/staging"
 for d in FIELD-B_M FIELD-B_S; do grep -q "^$F6 | synced | " "$USB/$d/magvault-backup.txt" || fail "mirror not synced on $d"; done
-pass "staging + mirror: committed, staging cleaned, set copy marked synced"
+grep -q "INFO   staging   Mag $F6 removed from local staging: two backups exist (server and field set FIELD-B)" "$CLI"/logs/*.log || fail "autoclean not logged"
+pass "staging + mirror: committed, set copy marked synced, staging cleaned (two backups: server + set)"
 mc ingest "$CARD" "${ING[@]}" --via direct > "$W/i7.out" 2>"$W/i7.err" || { cat "$W/i7.err"; fail "direct"; }
 F7=$(awk '/^ingested /{print $2}' "$W/i7.out")
 [ -d "$SRV/mags/$F7" ] && [ ! -e "$CLI/staging/$F7" ] || fail "direct route"
@@ -394,6 +411,94 @@ expect_fail "direct refused when offline" "needs the server" mc ingest "$CARD" "
 n_projects=$(sql "select count(*) from projects where name='Field'")
 [ "$n_projects" = 1 ] || fail "project duplicated ($n_projects)"
 pass "all client mags in one project (project list served by the server)"
+
+echo "== staging: two-backup rule offline, manual clean, autoclean off"
+mc ingest "$CARD" "${ING[@]}" --mirror-set --set FIELD-B --scan-root "$USB" --no-sync > "$W/i9.out" 2>/dev/null || fail "offline mirror"
+F9=$(awk '/^ingested /{print $2}' "$W/i9.out")
+[ -d "$CLI/staging/$F9" ] || fail "offline mirror: staging"
+grep -q "$F9  staging is the only copy\|$F9  on field set FIELD-B, not yet on the server" <<<"$(mc staging --scan-root "$USB")" || { mc staging --scan-root "$USB"; fail "staging list (pending)"; }
+mc sync --scan-root "$USB" > "$W/s5.out" 2>&1 || { cat "$W/s5.out"; fail "sync offline mirror"; }
+grep -q "cleaned   $F9  (local staging: two backups exist)" "$W/s5.out" || { cat "$W/s5.out"; fail "sync did not clean the mirrored staging copy"; }
+grep -q "^$F9 | synced | " "$USB/FIELD-B_M/magvault-backup.txt" || fail "set copy not marked synced by the staging upload"
+[ "$(grep -c "synced    $F9" "$W/s5.out")" = 1 ] || { cat "$W/s5.out"; fail "uploaded twice"; }
+[ ! -e "$CLI/staging/$F9" ] || fail "staging not cleaned after sync"
+pass "offline staging + set: sync uploads once, marks the set synced, cleans staging (two backups)"
+lst=$(mc staging)
+grep -q "$F1  on the server; kept in staging until a second backup exists" <<<"$lst" || { echo "$lst"; fail "staging list"; }
+grep -qE "local staging .* used / .* free  ·  autoclean on \(two backups\)" <<<"$lst" || { echo "$lst"; fail "staging usage line"; }
+out=$(mc staging clean 2>&1); grep -q "kept      $F1" <<<"$out" && [ -d "$CLI/staging/$F1" ] || { echo "$out"; fail "staging clean removed a one-backup mag"; }
+mc ingest "$CARD" "${ING[@]}" --no-sync > "$W/i10.out" 2>/dev/null; F10=$(awk '/^ingested /{print $2}' "$W/i10.out")
+expect_fail "a pending staged mag is never removed" "staging is the only copy besides the card; never removed" mc staging clean "$F10" --yes
+mc staging clean "$F1" --yes > "$W/sc.out" 2>&1 || { cat "$W/sc.out"; fail "staging clean <folder>"; }
+[ ! -e "$CLI/staging/$F1" ] && grep -q "removed from local staging by the operator (1 backup(s))" "$CLI"/logs/*.log || fail "named clean"
+pass "staging list and clean: two-backup rule; a named server-confirmed mag can be removed; pending never"
+sed -i 's/^staging_autoclean:.*/staging_autoclean: no/' "$CCFG/magvault.conf"
+mc ingest "$CARD" "${ING[@]}" --mirror-set --set FIELD-B --scan-root "$USB" > "$W/i11.out" 2>"$W/i11.err" || fail "mirror with autoclean off"
+F11=$(awk '/^ingested /{print $2}' "$W/i11.out")
+[ -d "$CLI/staging/$F11" ] && grep -q "staging autoclean is off" "$W/i11.err" || { cat "$W/i11.err"; fail "autoclean off ignored"; }
+mc staging clean --scan-root "$USB" > "$W/sc2.out" 2>&1; grep -q "removed   $F11  (two backups)" "$W/sc2.out" || { cat "$W/sc2.out"; fail "manual clean with autoclean off"; }
+sed -i 's/^staging_autoclean:.*/staging_autoclean: yes/' "$CCFG/magvault.conf"
+mc sync >/dev/null 2>&1 || fail "sync pending F10"
+pass "staging_autoclean: no keeps two-backup mags until \`magvault staging clean\`"
+
+echo "== camera profile checked on the server before the client uploads"
+cp "$CCFG/cameras/sony-a7siii.cam" "$CCFG/cameras/sony-local.cam"
+sed -i 's/^id: sony-a7siii/id: sony-local/; s/^name: .*/name: Sony Local Only/' "$CCFG/cameras/sony-local.cam"
+before=$(ls "$CLI/staging" | grep -cE '^[0-9]{8}_' || true)
+expect_fail "ingest refused before copying when the server lacks the profile" "camera profile \"sony-local\" is not on the server" \
+  mc ingest "$CARD" --project Field --camera sony-local --shoot-date 2026-11-20 --yes
+[ "$(ls "$CLI/staging" | grep -cE '^[0-9]{8}_' || true)" = "$before" ] || fail "something was copied to staging"
+[ -z "$(ls -A "$SRV/mags/.incoming/.clients/dit-a" | grep -v '^\.client-log' || true)" ] || fail "something was uploaded"
+mc ingest "$CARD" --project Field --camera sony-local --shoot-date 2026-11-20 --yes --no-sync > "$W/i12.out" 2>"$W/i12.err" || { cat "$W/i12.err"; fail "offline ingest with a local-only profile"; }
+grep -q "does not accept this mag: camera profile \"sony-local\" is not on the server" "$W/i12.err" || { cat "$W/i12.err"; fail "offline warning (cached server list)"; }
+F12=$(awk '/^ingested /{print $2}' "$W/i12.out")
+set +e; mc sync > "$W/s6.out" 2>&1; rc=$?; set -e
+[ $rc = 1 ] && grep -q "FAILED    $F12  not uploaded: camera profile \"sony-local\" is not on the server" "$W/s6.out" || { cat "$W/s6.out"; fail "sync pre-check"; }
+[ -z "$(ls -A "$SRV/mags/.incoming/.clients/dit-a" | grep -v '^\.client-log' || true)" ] || fail "sync uploaded a mag the server refuses"
+rm -rf "${CLI:?}/staging/$F12" "$CCFG/cameras/sony-local.cam"
+pass "camera values checked against the server's profiles: refused before copying online, warned offline, never uploaded by sync"
+
+echo "== project requirements: fixed lists at creation, warning at ingest, logged to the project"
+expect_fail "requirement values come from fixed lists" "--require-fps \"23.976\" must be one of 24, 25, 30, 50, 60" \
+  ms ingest "$CARD" --project ReqTest --camera sony-a7siii --require-fps 23.976 --yes
+out=$(ms ingest "$CARD" --project ReqTest --camera sony-a7siii --shoot-date 2026-11-20 --require-fps 25 --require-resolution HD --require-gop intra --yes 2>&1) || { echo "$out"; fail "server ingest with requirements"; }
+grep -q "requires    25 fps · HD · intra" <<<"$out" || { echo "$out"; fail "requirements not shown"; }
+grep -q "WARNING     Camera footage does not meet project requirements. (resolution SD (project requires HD); GOP long-GOP (project requires intra))" <<<"$out" || { echo "$out"; fail "requirements warning"; }
+RF=$(awk '/^ingested /{print $2}' <<<"$out")
+[ -d "$SRV/mags/$RF" ] || fail "not a hard stop"
+[ "$(sql "select requirements from projects where name='ReqTest'")" = "fps=25 res=HD gop=intra" ] || fail "requirements not stored"
+grep -q "^requirements_warning: resolution SD (project requires HD); GOP long-GOP (project requires intra)$" "$SRV/mags/$RF/magcard.txt" || fail "warning not on the mag card"
+pl=$(ms project-log ReqTest)
+grep -q "WARN   Camera footage does not meet project requirements. Mag $RF: resolution SD" <<<"$pl" || { echo "$pl"; fail "project log"; }
+grep -q "WARN   project   project ReqTest: Camera footage does not meet project requirements." "$SRV"/logs/*.log || fail "server log"
+expect_fail "an existing project keeps its requirements" "already exists with requirements 25 fps · HD · intra" \
+  ms ingest "$CARD" --project ReqTest --camera sony-a7siii --shoot-date 2026-11-20 --require-fps 50 --yes
+grep -q "ReqTest  requires 25 fps · HD · intra  · 1 warning(s) in the project log" <<<"$(ms projects)" || { ms projects; fail "server projects"; }
+sleep 2.5   # serve publishes requirements every 2 s
+grep -q "ReqTest  requires 25 fps · HD · intra" <<<"$(mc projects)" || { mc projects; fail "client projects: requirements from the server"; }
+out=$(mc ingest "$CARD" --project ReqTest --camera sony-a7siii --shoot-date 2026-11-20 --yes 2>&1) || { echo "$out"; fail "client ingest into a project with requirements"; }
+grep -q "WARNING     Camera footage does not meet project requirements." <<<"$out" || { echo "$out"; fail "client warning"; }
+CRF=$(awk '/^ingested /{print $2}' <<<"$out")
+[ "$(sql "select count(*) from project_log l join projects p on p.id=l.project_id where p.name='ReqTest' and l.message like '%$CRF%'")" = 1 ] || fail "server did not log the client mag to the project"
+grep -q "WARN   project   project ReqTest: Camera footage does not meet project requirements. Mag $CRF" "$CLI"/logs/*.log || fail "client log"
+out=$(mc ingest "$CARD" --project ReqNew --camera sony-a7siii --shoot-date 2026-11-20 --require-resolution SD --yes 2>&1) || { echo "$out"; fail "client new project with requirements"; }
+grep -q "card meets the project requirements" <<<"$out" || { echo "$out"; fail "matching card"; }
+[ "$(sql "select requirements from projects where name='ReqNew'")" = "res=SD" ] || fail "client new project created without its requirements"
+pass "requirements: fixed lists, stored at creation (server and client), warning not a hard stop, on the mag card and in the project log (server ingest and client upload)"
+
+echo "== mixed-camera card: warned and asked, --yes refuses, --mixed-ok accepts"
+MX="$W/mixed/MIXED"; mkdir -p "$MX/PRIVATE/M4ROOT/CLIP"
+for n in 1 2; do mkclip "$MX/PRIVATE/M4ROOT/CLIP/C000$n.MP4"; done
+printf '<NonRealTimeMeta><Device manufacturer="Sony" modelName="ILCE-7M3"/></NonRealTimeMeta>' > "$MX/PRIVATE/M4ROOT/CLIP/C0001M01.XML"
+printf '<NonRealTimeMeta><Device manufacturer="Sony" modelName="FDR-AX53"/></NonRealTimeMeta>' > "$MX/PRIVATE/M4ROOT/CLIP/C0002M01.XML"
+MXA=(--project Field --camera sony-ilce-7m3 --shoot-date 2026-11-20)
+expect_fail "--yes refuses a card with two cameras" "this card holds clips from more than one camera (ILCE-7M3, FDR-AX53)" mc ingest "$MX" "${MXA[@]}" --yes
+out=$(mc ingest "$MX" "${MXA[@]}" 2>&1 </dev/null) && fail "without --yes the mixed card must be confirmed"
+grep -q "WARNING: this card holds clips from more than one camera (ILCE-7M3, FDR-AX53); one mag is one camera" <<<"$out" && grep -q "confirmation needed" <<<"$out" || { echo "$out"; fail "mixed warning before the question"; }
+out=$(mc ingest "$MX" "${MXA[@]}" --yes --mixed-ok 2>&1) || { echo "$out"; fail "--mixed-ok"; }
+MXF=$(awk '/^ingested /{print $2}' <<<"$out")
+grep -qx "mixed_cameras: ILCE-7M3, FDR-AX53" "$SRV/mags/$MXF/magcard.txt" || fail "mixed cameras not recorded on the mag card"
+pass "mixed cameras: --yes refuses, without --yes the warning comes before the question, --mixed-ok ingests and records both models"
 
 echo "== offline client project: one UUID locally, merged into the server's project"
 ms ingest "$CARD" --project Night --camera sony-a7siii --shoot-date 2026-11-20 --yes >/dev/null 2>&1 || fail "server ingest Night"

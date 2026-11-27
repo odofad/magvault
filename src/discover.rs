@@ -32,6 +32,8 @@ pub struct Card {
     pub files: usize,
     pub bytes: u64,
     pub problem: Option<String>,
+    /// Content fingerprint (paths, sizes, mtimes) for the dump status.
+    pub fingerprint: Option<String>,
 }
 
 impl Card {
@@ -347,11 +349,13 @@ pub fn find_cards(vols: &[Volume], cams: &[CameraProfile]) -> Vec<Card> {
             files: 0,
             bytes: 0,
             problem: None,
+            fingerprint: None,
         };
         match probe::probe(&v.mount, false) {
             Ok(p) => {
                 card.files = p.files.len();
                 card.bytes = p.total_bytes;
+                card.fingerprint = Some(crate::staging::probe_fingerprint(&p.files));
                 let hints = crate::camera_meta::read(&p);
                 card.camera = guess_camera(&p, cams, &hints).ok().map(|c| (c.id.clone(), c.name.clone()));
                 card.model_hint = crate::camera_meta::describe(&hints);

@@ -265,7 +265,8 @@ pub enum ServerLink {
 pub struct ClientConfig {
     pub dir: PathBuf,
     /// Local staging (card → staging → server). Mags here are pending until the server
-    /// confirms; then they are removed (autoclean). Never /tmp.
+    /// confirms; they are removed (autoclean) once two backups exist (server + field set).
+    /// Never /tmp.
     pub staging: PathBuf,
     pub logs: PathBuf,
     pub cameras: PathBuf,
@@ -277,6 +278,11 @@ pub struct ClientConfig {
     /// How long ingest and sync wait for a server committer that is down
     /// (`committer_wait` seconds in magvault.conf, default 120).
     pub committer_wait: u64,
+    /// `staging_autoclean: yes|no` (default yes): remove a staged mag once two backups
+    /// exist (PLAN.md "Client staging cache"). Never when staging is the only copy.
+    pub staging_autoclean: bool,
+    /// `date_format` / `time_format` (PLAN.md "Time display").
+    pub display: crate::time::DisplayStyle,
 }
 
 pub const DEFAULT_COMMITTER_WAIT: u64 = 120;
@@ -353,9 +359,21 @@ pub fn load_client(dir: &Path) -> Result<ClientConfig> {
             Error(format!("{}: committer_wait must be a number of seconds, not {v:?}", mv_conf.display()))
         })?,
     };
+    let staging_autoclean = match settings.get("staging_autoclean").map(|s| s.trim()) {
+        None | Some("") | Some("yes") => true,
+        Some("no") => false,
+        Some(other) => crate::bail!("{}: staging_autoclean must be yes or no, not {other:?}", mv_conf.display()),
+    };
+    let display = crate::time::DisplayStyle::parse(
+        settings.get("date_format").map(String::as_str),
+        settings.get("time_format").map(String::as_str),
+    )
+    .map_err(|e| Error(format!("{}: {e}", mv_conf.display())))?;
     let cfg = ClientConfig {
         debug,
         committer_wait,
+        staging_autoclean,
+        display,
         staging: resolve(&dir, &get("staging").unwrap()),
         logs: resolve(&dir, &get("logs").unwrap()),
         cameras: resolve(&dir, &get("cameras").unwrap()),

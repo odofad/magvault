@@ -1,6 +1,6 @@
 //! Date and time helpers (std only). Magvault stores UTC everywhere (log day boundary
-//! is UTC). The only local-time value is the guessed shoot day, which is a calendar
-//! date as the camera crew saw it.
+//! is UTC). Local time is used for the guessed shoot day (a calendar date as the camera
+//! crew saw it) and for what the operator sees (`DisplayStyle`, PLAN.md "Time display").
 
 use std::ffi::{c_char, c_int, c_long};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -151,8 +151,9 @@ extern "C" {
     fn tzset();
 }
 
-/// Local calendar date of an epoch second, using the machine's time zone.
-pub fn local_date(secs: i64) -> (i64, u32, u32) {
+/// Local date and time of an epoch second, using the machine's time zone:
+/// (year, month, day, hour, minute, second).
+pub fn local(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     let mut tm = Tm {
         tm_sec: 0,
         tm_min: 0,
@@ -172,10 +173,126 @@ pub fn local_date(secs: i64) -> (i64, u32, u32) {
         !localtime_r(&secs, &mut tm).is_null()
     };
     if ok {
-        (tm.tm_year as i64 + 1900, tm.tm_mon as u32 + 1, tm.tm_mday as u32)
+        (
+            tm.tm_year as i64 + 1900,
+            tm.tm_mon as u32 + 1,
+            tm.tm_mday as u32,
+            tm.tm_hour as u32,
+            tm.tm_min as u32,
+            tm.tm_sec as u32,
+        )
     } else {
         let t = utc(secs);
-        (t.y, t.mo, t.d)
+        (t.y, t.mo, t.d, t.h, t.mi, t.s)
+    }
+}
+
+/// Local calendar date of an epoch second, using the machine's time zone.
+pub fn local_date(secs: i64) -> (i64, u32, u32) {
+    let (y, m, d, ..) = local(secs);
+    (y, m, d)
+}
+
+/// How dates and times are shown to the operator (PLAN.md "Time display"): 24-hour and
+/// DD/MM/YYYY by default; `date_format` and `time_format` in magvault.conf change them.
+/// Stored values (magcard, database, logs) stay ISO / UTC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisplayStyle {
+    pub order: DateOrder,
+    pub h24: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateOrder {
+    Dmy,
+    Ymd,
+    Mdy,
+}
+
+impl Default for DisplayStyle {
+    fn default() -> Self {
+        DisplayStyle { order: DateOrder::Dmy, h24: true }
+    }
+}
+
+impl DisplayStyle {
+    /// From `date_format` (DD/MM/YYYY, YYYY-MM-DD, MM/DD/YYYY) and `time_format` (24h, 12h).
+    pub fn parse(date: Option<&str>, clock: Option<&str>) -> Result<DisplayStyle, String> {
+        let order = match date.map(str::trim).filter(|s| !s.is_empty()) {
+            None | Some("DD/MM/YYYY") => DateOrder::Dmy,
+            Some("YYYY-MM-DD") => DateOrder::Ymd,
+            Some("MM/DD/YYYY") => DateOrder::Mdy,
+            Some(o) => return Err(format!("date_format must be DD/MM/YYYY, YYYY-MM-DD or MM/DD/YYYY, not {o:?}")),
+        };
+        let h24 = match clock.map(str::trim).filter(|s| !s.is_empty()) {
+            None | Some("24h") => true,
+            Some("12h") => false,
+            Some(o) => return Err(format!("time_format must be 24h or 12h, not {o:?}")),
+        };
+        Ok(DisplayStyle { order, h24 })
+    }
+
+    pub fn date(&self, y: i64, m: u32, d: u32) -> String {
+        match self.order {
+            DateOrder::Dmy => format!("{d:02}/{m:02}/{y:04}"),
+            DateOrder::Ymd => format!("{y:04}-{m:02}-{d:02}"),
+            DateOrder::Mdy => format!("{m:02}/{d:02}/{y:04}"),
+        }
+    }
+
+    /// An ISO date `YYYY-MM-DD` in this style (unchanged when it does not parse).
+    pub fn iso_date(&self, iso: &str) -> String {
+        match parse_date(iso) {
+            Some((y, m, d)) => self.date(y, m, d),
+            None => iso.to_string(),
+        }
+    }
+
+    /// An operator-typed date in this style or ISO, as ISO `YYYY-MM-DD`.
+    pub fn read_date(&self, s: &str) -> Option<String> {
+        let s = s.trim();
+        if parse_date(s).is_some() {
+            return Some(s.to_string());
+        }
+        let p: Vec<&str> = s.split('/').collect();
+        let [a, b, c] = p.as_slice() else { return None };
+        let (d, m, y) = match self.order {
+            DateOrder::Mdy => (b, a, c),
+            _ => (a, b, c),
+        };
+        let (y, m, d): (i64, u32, u32) = (y.parse().ok()?, m.parse().ok()?, d.parse().ok()?);
+        let iso = format!("{y:04}-{m:02}-{d:02}");
+        parse_date(&iso).map(|_| iso)
+    }
+
+    pub fn clock(&self, h: u32, mi: u32) -> String {
+        if self.h24 {
+            format!("{h:02}:{mi:02}")
+        } else {
+            let (h12, ap) = match h {
+                0 => (12, "am"),
+                1..=11 => (h, "am"),
+                12 => (12, "pm"),
+                _ => (h - 12, "pm"),
+            };
+            format!("{h12}:{mi:02} {ap}")
+        }
+    }
+
+    pub fn clock_secs(&self, h: u32, mi: u32, s: u32) -> String {
+        if self.h24 {
+            format!("{h:02}:{mi:02}:{s:02}")
+        } else {
+            let c = self.clock(h, mi);
+            let (hm, ap) = c.split_once(' ').unwrap_or((&c, ""));
+            format!("{hm}:{s:02} {ap}")
+        }
+    }
+
+    /// Local date and time of an epoch second: `28/11/2026  01:12:07`.
+    pub fn now_line(&self, secs: i64) -> String {
+        let (y, m, d, h, mi, s) = local(secs);
+        format!("{}  {}", self.date(y, m, d), self.clock_secs(h, mi, s))
     }
 }
 
@@ -206,6 +323,24 @@ mod tests {
         assert_eq!(parse_iso("2025-11-22 19:21:03"), Some(1_763_839_263));
         assert_eq!(parse_iso("2025-11-22T21:21:03+02:00"), Some(1_763_839_263));
         assert_eq!(parse_iso("garbage"), None);
+    }
+
+    #[test]
+    fn display_style() {
+        let st = DisplayStyle::default();
+        assert_eq!(st.date(2026, 11, 28), "28/11/2026");
+        assert_eq!(st.clock(9, 5), "09:05");
+        assert_eq!(st.iso_date("2026-11-27"), "27/11/2026");
+        assert_eq!(st.read_date("27/11/2026").as_deref(), Some("2026-11-27"));
+        assert_eq!(st.read_date("2026-11-27").as_deref(), Some("2026-11-27"));
+        assert_eq!(st.read_date("31/02/2026"), None);
+        let us = DisplayStyle::parse(Some("MM/DD/YYYY"), Some("12h")).unwrap();
+        assert_eq!(us.date(2026, 11, 28), "11/28/2026");
+        assert_eq!(us.read_date("11/27/2026").as_deref(), Some("2026-11-27"));
+        assert_eq!(us.clock(0, 7), "12:07 am");
+        assert_eq!(us.clock(15, 43), "3:43 pm");
+        assert_eq!(us.clock_secs(15, 43, 9), "3:43:09 pm");
+        assert!(DisplayStyle::parse(Some("D.M.Y"), None).is_err());
     }
 
     #[test]

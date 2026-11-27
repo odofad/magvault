@@ -2,13 +2,16 @@
 //! discovery, field sets, Prepare candidates, server ping, project list, staging). The
 //! screens only read it; tests build it by hand.
 
+use crate::cardinfo::{Requirements, Summary};
 use crate::client::{self, Transport};
 use crate::config::ClientConfig;
 use crate::discover::{self, Card};
 use crate::fieldset::{self, Candidate, FieldSet};
-use crate::ingest::is_mag_folder;
-use crate::probe::{self, Role};
+use crate::probe;
 use crate::profiles::{self, CameraProfile};
+use crate::staging::{self, DumpStatus};
+use crate::time::DisplayStyle;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// PLAN.md "Client ↔ server status": ready only when the committer answers.
@@ -56,12 +59,24 @@ pub struct Snapshot {
     pub server: ServerState,
     pub staging: PathBuf,
     pub staging_pending: Vec<String>,
+    /// Staged mags the server confirmed (kept until a second backup exists).
+    pub staging_synced: Vec<String>,
+    /// Bytes used by staging and free on its filesystem.
+    pub staging_usage: (u64, u64),
+    /// `staging_autoclean` (PLAN.md "Client staging cache").
+    pub autoclean: bool,
     pub cards: Vec<Card>,
+    /// Dump status per card (same order as `cards`).
+    pub dump: Vec<DumpStatus>,
     pub sets: Vec<FieldSet>,
     pub drives: Vec<DriveRow>,
     pub projects: Vec<(String, String)>,
+    /// Requirements of known projects (project id → requirements).
+    pub requirements: BTreeMap<String, Requirements>,
     pub cameras: Vec<CameraProfile>,
     pub activity: Vec<String>,
+    /// How dates and times are shown (magvault.conf).
+    pub display: DisplayStyle,
 }
 
 impl Snapshot {
@@ -70,12 +85,18 @@ impl Snapshot {
             server: ServerState::NotConfigured,
             staging,
             staging_pending: Vec::new(),
+            staging_synced: Vec::new(),
+            staging_usage: (0, 0),
+            autoclean: true,
             cards: Vec::new(),
+            dump: Vec::new(),
             sets: Vec::new(),
             drives: Vec::new(),
             projects: Vec::new(),
+            requirements: BTreeMap::new(),
             cameras: Vec::new(),
             activity: Vec::new(),
+            display: DisplayStyle::default(),
         }
     }
     /// The server can commit now.
@@ -84,11 +105,12 @@ impl Snapshot {
     }
 }
 
-/// Card preview for the Files and Details panes (probe without ffprobe, then the same
-/// guesses as `ingest`).
+/// Card preview for the Card and Details panes (the same probe and guesses as `ingest`).
+/// No file list (PLAN.md "Time display": Block 2 is a card summary).
 #[derive(Debug, Clone)]
 pub struct Preview {
-    pub files: Vec<(String, &'static str, u64)>,
+    /// Clips, size, clip time range, frame rate, resolution, GOP.
+    pub summary: Summary,
     pub total: u64,
     /// Camera profile id, or why there is no guess (same rule as `ingest`).
     pub camera: Result<String, String>,
@@ -96,6 +118,8 @@ pub struct Preview {
     pub shoot: Option<(String, String)>,
     /// Camera model read next to live media, with its source (operator confirms).
     pub model_hint: Option<String>,
+    /// Models named by live media when the card holds more than one camera.
+    pub mixed: Vec<String>,
 }
 
 pub fn gather(cc: &ClientConfig, scan_roots: &[PathBuf]) -> Snapshot {
@@ -109,11 +133,15 @@ pub fn gather(cc: &ClientConfig, scan_roots: &[PathBuf]) -> Snapshot {
         },
     };
     let online = matches!(server, ServerState::Ready(_) | ServerState::CommitterDown(..));
-    let projects = client::projects(cc, if online { t.as_ref() } else { None });
+    let t_online = if online { t.as_ref() } else { None };
+    let projects = client::projects(cc, t_online);
+    let requirements = client::requirements(cc, t_online);
     let cameras = profiles::load_cameras(&cc.cameras).profiles;
     let cards = discover::find_cards(&discover::volumes(scan_roots), &cameras);
     let all_drives = fieldset::drives(scan_roots);
     let sets = fieldset::sets(&all_drives);
+    let ledger = staging::dumps(cc);
+    let dump = cards.iter().map(|c| staging::card_status(&ledger, c.fingerprint.as_deref(), &cc.staging, &sets)).collect();
     let drives = if scan_roots.is_empty() {
         fieldset::candidates()
             .unwrap_or_default()
@@ -132,27 +160,20 @@ pub fn gather(cc: &ClientConfig, scan_roots: &[PathBuf]) -> Snapshot {
     Snapshot {
         server,
         staging: cc.staging.clone(),
-        staging_pending: staging_pending(&cc.staging),
+        staging_pending: staging::pending(&cc.staging),
+        staging_synced: staging::synced(&cc.staging).into_iter().collect(),
+        staging_usage: staging::usage(&cc.staging),
+        autoclean: cc.staging_autoclean,
         cards,
+        dump,
         sets,
         drives,
         projects,
+        requirements,
         cameras,
         activity: recent_log(&cc.logs, 12),
+        display: cc.display,
     }
-}
-
-fn staging_pending(staging: &Path) -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_dir(staging)
-        .map(|rd| {
-            rd.flatten()
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .filter(|n| is_mag_folder(n))
-                .collect()
-        })
-        .unwrap_or_default();
-    v.sort();
-    v
 }
 
 /// The newest lines of the newest log file, newest first.
@@ -172,21 +193,10 @@ pub fn preview(path: &Path, cameras: &[CameraProfile]) -> Result<Preview, String
     if p.files.is_empty() {
         return Err(format!("{} contains no files", path.display()));
     }
-    let files = p
-        .files
-        .iter()
-        .map(|f| {
-            let role = match f.role {
-                Role::Media => "clip",
-                Role::Sidecar => "sidecar",
-                Role::Other => "other",
-            };
-            (f.rel.clone(), role, f.size)
-        })
-        .collect();
     let hints = crate::camera_meta::read(&p);
+    let mixed = if hints.len() > 1 { hints.iter().map(|h| h.model.clone()).collect() } else { Vec::new() };
     let camera = discover::guess_camera(&p, cameras, &hints).map(|c| c.id.clone());
     let model_hint = crate::camera_meta::describe(&hints);
     let shoot = probe::guess_shoot_day(&p).map(|(d, src)| (d, src.to_string()));
-    Ok(Preview { files, total: p.total_bytes, camera, shoot, model_hint })
+    Ok(Preview { summary: crate::cardinfo::summarize(&p), total: p.total_bytes, camera, shoot, model_hint, mixed })
 }

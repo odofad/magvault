@@ -392,6 +392,7 @@ pub fn clean(
         ],
     )?;
     fieldset::save_list(&set, &[])?;
+    crate::staging::record_set_cleaned(cc, &set.label);
     let n = set.mags.len();
     log.info(
         "fieldset",

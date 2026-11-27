@@ -1,5 +1,6 @@
 //! Magvault command line (Phases 0 and 1). See `magvault --help`.
 
+mod cardinfo;
 mod catalog;
 mod client;
 mod camera_meta;
@@ -25,6 +26,7 @@ mod probe;
 mod profiles;
 mod reconcile;
 mod serve;
+mod staging;
 mod sync;
 mod tui;
 mod textfile;
@@ -58,6 +60,7 @@ const FLAGS: &[&str] = &[
     "--once",
     "--mirror-set",
     "--no-sync",
+    "--mixed-ok",
 ];
 
 fn parse_cli() -> Result<Cli> {
@@ -134,8 +137,14 @@ impl Cli {
     }
 }
 
-fn base_args(cli: &mut Cli) -> ingest::Args {
-    ingest::Args {
+fn base_args(cli: &mut Cli) -> Result<ingest::Args> {
+    let (fps, res, gop) = (cli.take("--require-fps"), cli.take("--require-resolution"), cli.take("--require-gop"));
+    let requirements = if fps.is_some() || res.is_some() || gop.is_some() {
+        Some(cardinfo::Requirements::from_flags(fps.as_deref(), res.as_deref(), gop.as_deref()).map_err(Error)?)
+    } else {
+        None
+    };
+    Ok(ingest::Args {
         project: cli.take("--project"),
         project_id: cli.take("--project-id"),
         camera: cli.take("--camera"),
@@ -146,8 +155,10 @@ fn base_args(cli: &mut Cli) -> ingest::Args {
         notes: cli.take("--notes"),
         model: cli.take("--model"),
         yes: cli.flag(&["--yes", "-y"]),
+        mixed_ok: cli.flag(&["--mixed-ok"]),
+        requirements,
         source: PathBuf::new(),
-    }
+    })
 }
 
 /// Source from the command line, or one of the detected cards (operator picks).
@@ -293,6 +304,9 @@ fn run() -> Result<ExitCode> {
             for p in &done.created {
                 println!("created {}", p.display());
             }
+            for n in &done.notes {
+                println!("{n}");
+            }
             if let Some(p) = done.pointer {
                 println!("pointer {} → {dir}", p.display());
             }
@@ -360,9 +374,9 @@ fn server_command(cmd: &str, mut cli: Cli, dir: &std::path::Path) -> Result<Exit
     log::configure(&cfg.paths.logs, debug);
     match cmd {
         "ingest" => {
-            let mut a = base_args(&mut cli);
+            let mut a = base_args(&mut cli)?;
             let roots = scan_roots(&mut cli);
-            cli.reject_unknown(&["--yes", "-y"])?;
+            cli.reject_unknown(&["--yes", "-y", "--mixed-ok"])?;
             let cams = profiles::load_cameras(&cfg.paths.cameras).profiles;
             a.source = source_or_card(&cli.positional, &cams, &roots, a.yes)?;
             let out = ingest::run(&cfg, a)?;
@@ -409,8 +423,44 @@ fn server_command(cmd: &str, mut cli: Cli, dir: &std::path::Path) -> Result<Exit
             serve::run(&cfg, cli.flag(&["--once"]))?;
             Ok(ExitCode::SUCCESS)
         }
+        "projects" => {
+            cli.reject_unknown(&[])?;
+            let db = db::Db::open(&cfg.paths.db_file())?;
+            db::ensure_schema(&db)?;
+            let rows = db.query(
+                "SELECT p.id, p.name, p.requirements, (SELECT COUNT(*) FROM project_log l WHERE l.project_id = p.id)
+                 FROM projects p WHERE p.status = 'open' ORDER BY p.name, p.created_at",
+                &[],
+            )?;
+            for r in rows {
+                let req = cardinfo::Requirements::parse(&r[2].s());
+                let n = r[3].int().unwrap_or(0);
+                let log = if n > 0 { format!("  · {n} warning(s) in the project log") } else { String::new() };
+                println!("{}  {}  requires {}{log}", r[0].s(), util::esc(&r[1].s()), req.display());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        "project-log" => {
+            cli.reject_unknown(&[])?;
+            let [key] = cli.positional.as_slice() else { bail!("project-log needs one project name or UUID") };
+            let db = db::Db::open(&cfg.paths.db_file())?;
+            db::ensure_schema(&db)?;
+            let rows = db.query("SELECT id, name, requirements FROM projects WHERE id = ?1 OR name = ?1", &[key.as_str().into()])?;
+            let [p] = rows.as_slice() else {
+                bail!("{} project(s) match {key:?}; use the UUID", rows.len())
+            };
+            println!("project {}  requires {}", util::esc(&p[1].s()), cardinfo::Requirements::parse(&p[2].s()).display());
+            let log = db.query("SELECT at, level, message FROM project_log WHERE project_id = ?1 ORDER BY id", &[p[0].s().into()])?;
+            if log.is_empty() {
+                println!("  (nothing logged)");
+            }
+            for l in log {
+                println!("{}  {:<5}  {}", l[0].s(), l[1].s(), util::esc(&l[2].s()));
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         "ui" => bail!("the Phase 1 TUI is the client dashboard (config with `mode: client`); the server dashboard comes in Phase 2"),
-        "sync" | "usb" | "projects" => bail!(
+        "sync" | "usb" | "staging" => bail!(
             "`{cmd}` is a client command; this config directory is a server (no `mode: client`)"
         ),
         other => bail!("unknown command {other:?} (see `magvault --help`)"),
@@ -430,12 +480,12 @@ fn client_command_inner(cmd: &str, mut cli: Cli, cc: &config::ClientConfig) -> R
     let cc = cc.clone();
     match cmd {
         "ingest" => {
-            let mut base = base_args(&mut cli);
+            let mut base = base_args(&mut cli)?;
             let roots = scan_roots(&mut cli);
             let via =
                 client_ingest::Via::parse(&cli.take("--via").unwrap_or_else(|| "staging".into()))?;
             let set_label = cli.take("--set");
-            cli.reject_unknown(&["--yes", "-y", "--mirror-set", "--no-sync"])?;
+            cli.reject_unknown(&["--yes", "-y", "--mirror-set", "--no-sync", "--mixed-ok"])?;
             let cams = profiles::load_cameras(&cc.cameras).profiles;
             base.source = source_or_card(&cli.positional, &cams, &roots, base.yes)?;
             let a = client_ingest::ClientArgs {
@@ -520,16 +570,101 @@ fn client_command_inner(cmd: &str, mut cli: Cli, cc: &config::ClientConfig) -> R
         "projects" => {
             cli.reject_unknown(&[])?;
             let t = client::Transport::new(&cc);
+            let reqs = client::requirements(&cc, t.as_ref());
             for (id, name) in client::projects(&cc, t.as_ref()) {
-                println!("{id}  {}", util::esc(&name));
+                let r = reqs.get(&id).copied().unwrap_or_default();
+                println!("{id}  {}  requires {}", util::esc(&name), r.display());
             }
             Ok(ExitCode::SUCCESS)
         }
-        "reconcile" | "serve" => {
+        "staging" => {
+            let roots = scan_roots(&mut cli);
+            let yes = cli.flag(&["--yes", "-y"]);
+            cli.reject_unknown(&["--yes", "-y"])?;
+            match cli.positional.as_slice() {
+                [] => staging_list(&cc, &roots),
+                [c] if c == "clean" => staging_clean(&cc, &roots, None, yes)?,
+                [c, f] if c == "clean" => staging_clean(&cc, &roots, Some(f), yes)?,
+                _ => bail!("usage: magvault staging [clean [<mag folder>]] (see `magvault staging --help`)"),
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        "reconcile" | "serve" | "project-log" => {
             bail!("`{cmd}` is a server command; this config directory is a client (`mode: client`)")
         }
         other => bail!("unknown command {other:?} (see `magvault --help`)"),
     }
+}
+
+/// `magvault staging`: every staged mag and its state.
+fn staging_list(cc: &config::ClientConfig, roots: &[PathBuf]) {
+    let sets = fieldset::sets(&fieldset::drives(roots));
+    let synced = staging::synced(&cc.staging);
+    let all = staging::mags(&cc.staging);
+    let (used, free) = staging::usage(&cc.staging);
+    println!(
+        "local staging {}  ·  {} used / {} free  ·  autoclean {}",
+        cc.staging.display(),
+        util::human(used),
+        util::human(free),
+        if cc.staging_autoclean { "on (two backups)" } else { "off" }
+    );
+    if all.is_empty() {
+        println!("  empty");
+    }
+    for f in all {
+        let b = staging::Backups { server: synced.contains(&f), field_set: staging::set_holding(&sets, &f).map(|s| s.label.clone()) };
+        let state = match staging::clean_rule(&b) {
+            Ok(()) => "two backups (server + field set); cleaned by autoclean or `staging clean`".to_string(),
+            Err(why) => why,
+        };
+        println!("  {f}  {state}");
+    }
+}
+
+/// `magvault staging clean [<folder>]`: the two-backup rule for all; one named mag the server
+/// confirmed may go with one backup (asks first). A pending mag is never removed.
+fn staging_clean(cc: &config::ClientConfig, roots: &[PathBuf], folder: Option<&String>, yes: bool) -> Result<()> {
+    let log = log::Log::new(&cc.logs);
+    let sets = fieldset::sets(&fieldset::drives(roots));
+    let synced = staging::synced(&cc.staging);
+    match folder {
+        None => {
+            let mut n = 0;
+            for f in staging::mags(&cc.staging) {
+                let b = staging::Backups { server: synced.contains(&f), field_set: staging::set_holding(&sets, &f).map(|s| s.label.clone()) };
+                match staging::clean_rule(&b) {
+                    Ok(()) => {
+                        staging::remove(&cc.staging, &f)?;
+                        log.info("staging", &format!("Mag {f} removed from local staging by the operator: two backups exist"));
+                        println!("removed   {f}  (two backups)");
+                        n += 1;
+                    }
+                    Err(why) => println!("kept      {f}  ({why})"),
+                }
+            }
+            println!("{n} removed");
+        }
+        Some(f) => {
+            if !staging::mags(&cc.staging).contains(f) {
+                bail!("{f} is not in local staging");
+            }
+            if !synced.contains(f) {
+                bail!("{f} is not on the server yet: staging is the only copy besides the card; never removed (run `magvault sync`)");
+            }
+            let b = staging::Backups { server: true, field_set: staging::set_holding(&sets, f).map(|s| s.label.clone()) };
+            if b.count() < 2 {
+                eprintln!("{f} is on the server only: after this the server holds the only Magvault copy.");
+                if !yes && !util::confirm("Remove it from local staging?")? {
+                    bail!("cancelled; nothing removed");
+                }
+            }
+            staging::remove(&cc.staging, f)?;
+            log.info("staging", &format!("Mag {f} removed from local staging by the operator ({} backup(s))", b.count()));
+            println!("removed   {f}");
+        }
+    }
+    Ok(())
 }
 
 fn main() -> ExitCode {

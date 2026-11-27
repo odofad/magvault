@@ -31,6 +31,8 @@ tests/e2e-phase1.sh        # Phase 1; run as root to include the loop-device Pre
 # server
 magvault --config /srv/magvault/config serve            # commits client uploads; Ctrl-C stops
 magvault --config /srv/magvault/config serve --once     # one pass (tests, cron)
+magvault --config /srv/magvault/config projects         # open projects, requirements, warnings
+magvault --config /srv/magvault/config project-log ACME # the project log
 
 # client
 magvault --config ~/magvault/config init --mode client --root ~/magvault --server courage
@@ -43,6 +45,9 @@ magvault sync                                   # pending mags → server
 magvault usb status
 magvault usb prepare                            # the Prepare popup (master, then slave)
 magvault usb clean --set FIELD-A
+magvault ingest --project NEW --require-fps 25 --require-resolution HD   # new project with requirements
+magvault staging                                # staged mags: waiting / on the server, used / free
+magvault staging clean                          # remove staged mags with two backups
 magvault projects
 ```
 
@@ -60,16 +65,30 @@ commands. Without a terminal, `magvault` prints the help and `magvault ui` refus
 - **Plain by default.** The screens show card label, camera, project, set name,
   pending / synced / empty, the server status and the next action. Paths, UUIDs, device
   nodes and the raw log format appear only after `d` (details; `d` again hides them).
+- **Keys** (PLAN.md "Shared key convention"): ←→ or Tab / Shift+Tab move between panes,
+  ↑↓ select the item, Enter picks, F1 shows help for the screen, Esc returns to the
+  dashboard, `q` quits (dashboard only). No F2.
 - **Dashboard** (landing): a "Next" line (the one thing to do now), server status,
-  local staging and field sets, recent activity (newest log lines, plain). Modules:
-  `i` Ingest; `g` Logging, `l` Library and `s` server dashboard are stubs for later
-  phases. `y` syncs pending mags, `r` refreshes, `q` quits (dashboard only).
-- **Ingest**: panes 1 Detected (cards, plus "type a path…"), 2 Files (the probed card),
-  3 Project (open projects; `n` new project by name, same rule as `--project`),
-  4 Details (camera, format, gamma, gamut from the camera profile only; shoot day; notes),
-  5 Targets (local staging, server, each field set as one row, each not-valid USB drive
-  by model and size with `[ o Prepare ]`; camera cards are never listed there). Enter or
-  Space toggles a target. The checkboxes map to the CLI routes: staging = default,
+  local staging (waiting / on the server and kept, used / free) and field sets, recent
+  activity (newest log lines, plain). Modules: `i` Ingest; `g` Logging, `l` Library,
+  `h` server dashboard and `s` Settings are stubs for later phases. `y` syncs pending
+  mags, `r` refreshes.
+- **Ingest** (layout from docs/mockups/ingest.md): panes 1 Detected (cards with a dump
+  status dot: red not dumped, yellow dumped but not yet two copies with one on the
+  server, green two copies and on the server; plus "type a path…"), 2 Card (a summary,
+  no file list: shoot date and clip time range, clips, total size, frame rate,
+  resolution and GOP for the card, the dominant value plus "mixed" when clips differ,
+  the dump status), System time (wall clock, 24-hour, DD/MM/YYYY by default;
+  `date_format` / `time_format` in magvault.conf), 3 Project (Enter opens the open
+  projects; `n` new project by name, then its requirements from the fixed lists; the
+  project's requirements and, when the card does not meet them, "Camera footage does
+  not meet project requirements." — not a hard stop), 4 Details (camera, format, gamma,
+  gamut from the camera profile only; shoot day; notes; model; the confirm checklist),
+  5 Targets (local staging with a used / free bar, server, each field set as one row,
+  each not-valid USB drive by model and size with `[ o Prepare ]`; camera cards are
+  never listed there; the pane scrolls when there are more rows than fit). Enter or
+  Space toggles a target. `l` shows the whole ingest log. A card whose clips name more
+  than one camera shows a warning, and `p` asks before pulling it as one mag. The checkboxes map to the CLI routes: staging = default,
   staging + set = `--mirror-set`, set only = `--via set`, server only = `--via direct`,
   server unticked = `--no-sync`. The warning line shows when no field set is ticked (and
   says so more strongly when the server is not confirmed). `p` pulls once card, camera,
@@ -85,11 +104,12 @@ commands. Without a terminal, `magvault` prints the help and `magvault ui` refus
 `usb::clean` — the code behind `ingest`, `sync`, `usb prepare-*` and `usb clean` — with
 the operator's choices and `--yes` (the TUI popup is the confirmation). They run on a
 worker thread; what the CLI would print and its progress come back through one output
-sink (`src/out.rs`): a progress popup shows the stage (hashing, copying / uploading,
-verifying, server), a bar with bytes and percent (rsync `--info=progress2`, hash and
-verify progress) and the latest lines. When the step ends, the TUI stays where it was:
-one line in the log, a message on failure. Ctrl-C while a step runs cancels it (an
-ingest commits nothing; a mag already copied stays pending).
+sink (`src/out.rs`). A pull runs in the Ingest bar ("Ingesting": `x ABORT`, a bar with
+bytes and percent, the stages hash → copy → verify → server commit) while the panes stay
+visible and locked; Sync, Prepare and Clean show a progress popup. When the step ends,
+the TUI stays where it was: one line in the log, a message on failure. `x` (pull) or
+Ctrl-C while a step runs aborts it (an ingest commits nothing; a mag already copied
+stays pending).
 
 **Sudo in the TUI.** Prepare and Clean ask for the sudo password in a focused prompt
 (dots on screen). The password is handed once to `sudo -k -S` for that helper call,
@@ -224,14 +244,53 @@ Phase 0.
 
 | Route | Copies | Server |
 | --- | --- | --- |
-| default (`--via staging`) | card → local staging | rsync to the server, server verifies and commits, then the staging copy is removed (autoclean) |
-| `--mirror-set` | card → local staging, then staging → master → slave | as above; the set copy is marked `synced` and kept until Clean |
+| default (`--via staging`) | card → local staging | rsync to the server, server verifies and commits; the staging copy is kept (the server is one backup) |
+| `--mirror-set` | card → local staging, then staging → master → slave | as above; the set copy is marked `synced` and kept until Clean; staging is removed (two backups: server + set) |
 | `--via set` | card → master, master → slave (verified) | uploaded from the master; marked `synced` on both drives |
 | `--via direct` | card → server only (refused when the server is not reachable) | committed before the card is released |
 
 When the server cannot be reached (or `--no-sync`), the mag stays pending in staging or on
 the set. With no field-set copy and no server confirmation, ingest prints a WARNING ("keep
 the card") and logs it.
+
+**Staging autoclean** (PLAN.md "Client staging cache"). A staged mag the server confirmed
+is listed in `<staging>/.magvault/synced` and kept until a second backup exists: a mounted
+field set that holds it. Then ingest or `sync` removes it and logs that. Staging + server
+alone is kept; staging alone (pending) is never removed. `staging_autoclean: no` in the
+client's magvault.conf keeps everything; `magvault staging` lists staged mags with their
+state and used / free space, `magvault staging clean` removes the mags with two backups,
+`magvault staging clean <mag>` removes one server-confirmed mag (asks when the server is
+its only backup). `sync` uploads a mag once: a set copy of a mag already confirmed from
+staging is marked synced without a second upload.
+
+**Server camera check before upload.** `serve` publishes its camera profiles
+(`results/cameras.txt`, gate verb `cameras`). Online, ingest refuses before copying when
+the chosen camera / format / gamma / gamut is not in the server's profile; offline, the
+cached list (`<config>/cameras.cache`) gives a warning. `sync` checks each mag's magcard
+against the list and never uploads one the server would refuse (it stays pending, FAILED
+with the reason). A server that does not publish the list yet (older serve) is checked
+after the upload as before.
+
+**Project requirements.** `ingest --require-fps 24|25|30|50|60 --require-resolution
+4K|HD|SD --require-gop intra|long-GOP` set a NEW project's requirements (TUI: the New
+project popup). The summary shows the card's frame rate / resolution / GOP and, when the
+project has requirements, "Camera footage does not meet project requirements." with what
+differs. Not a hard stop. The mag card gets `requirements_warning` (and, for a new client
+project, `project_requirements`, so the server creates the project with them); the server
+re-checks every upload against its own `projects.requirements` and writes the mismatch to
+`project_log` and its daily log. `magvault projects` shows requirements (server: with the
+warning count); `magvault project-log <project>` (server) shows the log. Requirements
+reach clients through the gate verb `requirements` (cached in `requirements.cache`).
+
+**Mixed-camera cards.** When the live media names more than one camera, ingest warns and
+asks "Ingest the whole card as one mag anyway?"; `--yes` refuses unless `--mixed-ok` is
+given; the mag card records `mixed_cameras`. The TUI shows the warning in 2 Card and asks
+before Pull.
+
+**Dump status.** Each ingested mag is recorded in `<config>/dumps.txt` with a fingerprint
+of its card (relative path, size, mtime of every file). A detected card with that
+fingerprint is dumped; copies counted are the server (confirmed), staging and the field
+set (a mounted set is checked; an unmounted one is trusted). Cleaning a set updates it.
 
 ### Client → server
 
@@ -331,9 +390,11 @@ Each is the smallest choice consistent with PLAN.md; each is easy to change.
   by hand (below). PLAN.md's AuthorizedKeysCommand / Keys page comes later.
 - **`magvault serve` is the first piece of `magvaultd`.** It is started by hand (or a
   systemd unit you write); it polls every 2 s.
-- **Camera profiles on the client** are local copies made by `init --mode client`; keep
-  them in step with the server by hand. The server checks every upload against its own
-  profile.
+- **Camera profiles on the client** are local copies made by `init --mode client`.
+  Running `init --mode client` again installs shipped profiles that are missing and never
+  overwrites a local file (a different one is reported). Before copying, the client
+  checks its choice against the server's published list; the server checks every upload
+  against its own profile.
 - **Ownership after commit.** Uploaded files keep the `magvaultclient` owner and the
   `magvault-spool` group (0660/2770) after they move into `mags/`; the server reads and
   manages them through the group.
@@ -389,8 +450,14 @@ sudo chmod 0440 /etc/sudoers.d/magvault-helper && sudo visudo -c
 
 `tests/e2e-phase1.sh` runs the server, a client with the local test transport and a
 background `serve` on one machine. It covers: discovery fixtures (Sony XAVC, Canon XF,
-generic DCIM, non-card folder ignored, several cards need a pick); staging → server →
-autoclean with logs on both sides; offline ingest pending + sync; a corrupted local copy is
+generic DCIM, non-card folder ignored, several cards need a pick); staging → server with
+staging kept (one backup), staging + set → server with staging removed (two backups),
+offline staging + set synced once and cleaned, `magvault staging` list / clean / named
+clean / pending never removed, `staging_autoclean: no`; the server camera check (refused
+before copying online, warned offline, never uploaded by sync); project requirements
+(fixed lists, stored at creation on server and client, warning, mag card, project log,
+existing project keeps its values); a mixed-camera card (`--yes` refuses, warning before
+the question, `--mixed-ok`); offline ingest pending + sync; a corrupted local copy is
 not sent; a tampered upload is refused by the server and the spool cleaned; gate refusals
 (download, shell, paths, missing folder, bad label); field set as folders (pending on both
 drives, Clean refused while pending, sync marks synced and keeps mags, helper refuses
@@ -412,7 +479,11 @@ one card picked and probed, Pull arguments, target routes, Prepare popup open / 
 confirm, refused ZFS disk and smaller slave, Clean hidden while pending and offered when
 synced, pickers, resize message, sudo prompt (dots, Esc reports, the password never on
 screen or in Debug), progress popup and Ctrl-C, committer down never "reachable", plain
-wording; `MAGVAULT_TUI_DUMP=<dir>` writes the screens as text).
+wording, ←→ panes and F1 help on both screens, `h` / `s` stubs, card summary without a
+file list, requirements warning and the New project requirements popup, mixed-camera
+confirmation, dump colours (red / yellow / green), staging bar and autoclean note, the
+System time block, the inline pull with `x` abort; `MAGVAULT_TUI_DUMP=<dir>` writes the
+screens as text).
 `tests/e2e-phase1.sh` also drives the real binary in a pseudo-terminal
 (`tests/tui_pty.py`, a small VT100 emulator): a full pull inside the TUI with the
 progress bar (the rsync stand-in prints progress2 lines; `FAKE_RSYNC_FILE_DELAY` slows
@@ -420,7 +491,7 @@ it) through the client ingest to a server commit, the Prepare popup and Esc, the
 committer-down status, and as root Clean (refused while pending, then done) and Prepare
 (master with an edited label, larger slave limited) on loop devices. The committer-down
 section stops serve: ingest warns, waits `committer_wait` (3 s in the test) and leaves
-the mag pending; sync times out; after a restart with `--debug` the client issues and
+the mag pending; sync times out; the TUI bot also opens F1 help and moves panes with →; after a restart with `--debug` the client issues and
 DEBUG lines (gate verbs, serve accept, rsync, verify, rename, forwarded client lines)
 are checked in both logs.
 

@@ -17,6 +17,7 @@ SERVER COMMANDS (config without `mode: client`)
   reconcile   compare magcards with the database (database wins for metadata)
   serve       commit mags uploaded by clients
   gate        forced command for a client's SSH key (not run by hand)
+  project-log requirement warnings and other notes logged to a project
 
 CLIENT COMMANDS (config with `mode: client`)
   ui          the terminal UI: dashboard, Ingest, Prepare and Clean (same as no command)
@@ -24,10 +25,11 @@ CLIENT COMMANDS (config with `mode: client`)
   ingest      card to local staging, field set or server; sent to the server
   sync        send pending mags to the server and mark them synced
   usb         field backup sets: status, prepare, clean
-  projects    open projects (from the server, else the local cache)
+  staging     local staging: what waits, what is on the server, clear by hand
 
 BOTH
   cards       list detected camera cards
+  projects    open projects and their requirements
 
 GLOBAL
   --config <dir>   config directory (else MAGVAULT_CONFIG, else ~/.config/magvault/config-dir,
@@ -74,6 +76,13 @@ FLAGS
   --notes <text>         mag-level notes
   --model <name>         camera model as you name it (default: the model the card's live
                          media names, shown as \"model hint\"; stored on the mag card)
+  --require-fps <n>      NEW project only: frame rate 24, 25, 30, 50 or 60
+  --require-resolution <r>  NEW project only: 4K, HD or SD
+  --require-gop <g>      NEW project only: intra or long-GOP
+                         (a card that does not meet the project's requirements is
+                         ingested with a warning; the mismatch is logged to the project)
+  --mixed-ok             accept a card whose clips name more than one camera (otherwise
+                         ingest asks, and --yes refuses)
   --yes, -y              accept the guesses and the single detected card; no prompts
   --scan-root <dir>      look for cards in the folders of <dir> instead of mounts (repeatable)
 
@@ -124,7 +133,8 @@ const GATE: &str = "\
 magvault gate — forced command for a client's SSH key
 
 Reads SSH_ORIGINAL_COMMAND and allows only: upload into this client's spool (rrsync -wo),
-commit <folder>, status <folder>, projects, ping. Everything else is refused. Put it in
+commit <folder>, status <folder>, projects, requirements, cameras, ping, log. Everything
+else is refused. Put it in
 the client's authorized_keys line; it is not run by hand.
 
 FLAGS
@@ -154,10 +164,12 @@ EXAMPLE
 const SYNC: &str = "\
 magvault sync — send pending mags to the server (client)
 
-Re-verifies each pending mag (local staging and mounted field sets) against its stored
-SHA-256, uploads it, waits for the server to commit, then removes it from staging or marks
-it synced on both drives of the set. Exit code 1 if anything failed or a set needs both
-drives mounted.
+Checks each pending mag's camera values against the server's profiles (nothing is
+uploaded when the server would refuse them), re-verifies it (local staging and mounted
+field sets) against its stored SHA-256, uploads it and waits for the server to commit.
+Then a set mag is marked synced on both drives; a staged mag is marked on the server and
+removed from staging once two backups exist (server + field set). Exit code 1 if anything
+failed or a set needs both drives mounted.
 
 FLAGS
   --set <label>       only this field set
@@ -207,11 +219,12 @@ logged). `magvault` with no command opens it on a terminal.
 
 KEYS
   Esc back to the dashboard (closes a popup)   q quit (dashboard only)
-  Tab / Shift+Tab pane   ↑↓ move   Enter pick / toggle
-  dashboard: i Ingest, g Logging, l Library, s server dashboard (later phases), r refresh
-  ingest: n new project, r rescan, p pull, o Prepare, c Clean
+  ←→ or Tab / Shift+Tab pane   ↑↓ item   Enter pick / toggle   F1 help for the screen
+  dashboard: i Ingest, g Logging, l Library, h server dashboard, s Settings (later
+             phases), r refresh
+  ingest: n new project (with requirements), r rescan, p pull, o Prepare, c Clean, l log
   both: y sync pending mags, d show / hide details (paths, UUIDs, device names)
-  while a step runs: Ctrl-C cancels it
+  while a pull runs: x or Ctrl-C aborts it
 
 FLAGS
   --scan-root <dir>   cards and field drives as folders in <dir> (tests, demos; repeatable)
@@ -221,13 +234,48 @@ EXAMPLE
 ";
 
 const PROJECTS: &str = "\
-magvault projects — open projects (client)
+magvault projects — open projects and their requirements
 
-Lists the server's open projects (UUID and name); when the server cannot be reached, the
-cached list plus projects this client created itself.
+Server: open projects from the database with their requirements and how many warnings
+their project log holds. Client: the server's open projects; when the server cannot be
+reached, the cached list plus projects this client created itself.
 
 EXAMPLE
   magvault projects
+";
+
+const PROJECT_LOG: &str = "\
+magvault project-log — notes logged to a project (server)
+
+Shows a project's log: \"Camera footage does not meet project requirements.\" for every mag
+ingested (here or from a client) that did not meet them, with what differed.
+
+USAGE
+  magvault project-log <project name or uuid>
+
+EXAMPLE
+  magvault project-log ACME_Campaign_2025
+";
+
+const STAGING: &str = "\
+magvault staging — local staging (client)
+
+Lists the mags in local staging: pending (waiting for the server; staging is the only
+copy besides the card), or on the server (kept until a second backup exists). Autoclean
+removes a staged mag once two backups exist (server + field set); `staging_autoclean: no`
+in magvault.conf turns that off. `clean` removes by hand: every mag with two backups, or
+one named mag that the server has confirmed (asks first). A pending mag is never removed.
+
+USAGE
+  magvault staging
+  magvault staging clean [<mag folder>] [--yes]
+
+FLAGS
+  --yes, -y           do not ask before removing a named mag
+  --scan-root <dir>   field-set drives as folders in <dir> (tests; repeatable)
+
+EXAMPLE
+  magvault staging clean
 ";
 
 /// Help for one command, `None` for an unknown command.
@@ -242,6 +290,8 @@ pub fn command(name: &str) -> Option<&'static str> {
         "sync" => SYNC,
         "usb" => USB,
         "projects" => PROJECTS,
+        "project-log" => PROJECT_LOG,
+        "staging" => STAGING,
         "ui" => UI,
         _ => return None,
     })
@@ -253,7 +303,7 @@ mod tests {
 
     #[test]
     fn top_level_lists_commands_without_flags() {
-        for c in ["init", "ingest", "reconcile", "serve", "gate", "cards", "sync", "usb", "projects", "ui"] {
+        for c in ["init", "ingest", "reconcile", "serve", "gate", "cards", "sync", "usb", "projects", "project-log", "staging", "ui"] {
             assert!(TOP.lines().any(|l| l.trim_start().starts_with(&format!("{c} "))), "{c} missing");
             assert!(command(c).is_some(), "no help for {c}");
         }
@@ -264,7 +314,7 @@ mod tests {
 
     #[test]
     fn command_help_has_purpose_and_example() {
-        for c in ["init", "ingest", "reconcile", "serve", "gate", "cards", "sync", "usb", "projects", "ui"] {
+        for c in ["init", "ingest", "reconcile", "serve", "gate", "cards", "sync", "usb", "projects", "project-log", "staging", "ui"] {
             let h = command(c).unwrap();
             assert!(h.starts_with(&format!("magvault {c} — ")), "{c}");
             assert!(h.contains("\nEXAMPLE\n"), "{c}");

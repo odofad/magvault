@@ -5,6 +5,12 @@ docs/phase0-report.md, docs/phase1.md, docs/camera-identification-findings.md, a
 on `main` at `d98e59b` (`src/`, `tests/`, `share/cameras/`). docs/test-report-camera-profiles.md
 is not in the repository and was not audited. No code was changed; PLAN.md was not edited.
 
+> **Update 2026-11-28 (must-fix batch):** §8 items 1–6 are implemented and PLAN.md
+> corrected for C1, C3, C4, C6, C7, C8 and C5 (server dashboard is `h`; Clean is `c`).
+> Also built: card summary (Block 2), System time, dump colours, staging bar (M2, M3, M4,
+> M5, M6, M8 `x` / `l`, M18). Item 7 (real `sudo -S` on rafiki) is still a human test.
+> See docs/phase1.md. The rest of this audit is left as written.
+
 ## 1. Verdict
 
 **The plan needs fixes before the next round of human testing.** The Phase 0 and Phase 1

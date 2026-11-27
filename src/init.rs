@@ -19,6 +19,30 @@ const STARTER_ENCODERS: &[(&str, &str)] = &[
 pub struct Done {
     pub created: Vec<PathBuf>,
     pub pointer: Option<PathBuf>,
+    /// Shipped profiles that were not written because a different local file exists.
+    pub notes: Vec<String>,
+}
+
+/// Install shipped profiles (PLAN.md "Profile updates"): every missing file is written;
+/// an existing file is never overwritten. A local file that differs from the shipped one
+/// is reported, so the operator can replace it by hand.
+fn install_shipped(folder: &Path, files: &[(&str, &str)], created: &mut Vec<PathBuf>, notes: &mut Vec<String>) -> Result<()> {
+    std::fs::create_dir_all(folder).ctx(format!("cannot create {}", folder.display()))?;
+    for (name, text) in files {
+        let p = folder.join(name);
+        match std::fs::read_to_string(&p) {
+            Err(_) if !p.exists() => {
+                atomic_write(&p, text.as_bytes())?;
+                created.push(p);
+            }
+            Ok(local) if local == *text => {}
+            _ => notes.push(format!(
+                "kept {} (differs from the shipped {name}; replace it by hand to take the new one)",
+                p.display()
+            )),
+        }
+    }
+    Ok(())
 }
 
 fn path_conf(root: &Path) -> String {
@@ -62,7 +86,12 @@ const CLIENT_MAGVAULT_CONF: &str = "format: magvault/1\n\
 # DEBUG lines in the daily logs (yes|no); --verbose / --debug turn it on for one run.\n\
 debug: no\n\
 # Seconds ingest and sync wait for a server whose committer (magvault serve) is down.\n\
-committer_wait: 120\n";
+committer_wait: 120\n\
+# Remove a staged mag once two backups exist (server + field set); never the only copy.\n\
+staging_autoclean: yes\n\
+# What the operator sees (stored values stay ISO / UTC).\n\
+date_format: DD/MM/YYYY\n\
+time_format: 24h\n";
 
 pub fn run(dir: &Path, root: Option<&Path>, write_pointer: bool) -> Result<Done> {
     let dir = if dir.is_absolute() { dir.to_path_buf() } else { std::env::current_dir()?.join(dir) };
@@ -86,15 +115,9 @@ pub fn run(dir: &Path, root: Option<&Path>, write_pointer: bool) -> Result<Done>
 
     let cfg = config::load(&dir)?;
     config::ensure_roots(&cfg.paths)?;
+    let mut notes = Vec::new();
     for (folder, files) in [(&cfg.paths.cameras, STARTER_CAMERAS), (&cfg.paths.encoders, STARTER_ENCODERS)] {
-        let empty = std::fs::read_dir(folder).map(|mut d| d.next().is_none()).unwrap_or(true);
-        if empty {
-            for (name, text) in files {
-                let p = folder.join(name);
-                atomic_write(&p, text.as_bytes())?;
-                created.push(p);
-            }
-        }
+        install_shipped(folder, files, &mut created, &mut notes)?;
     }
     let db_file = cfg.paths.db_file();
     let fresh = !db_file.exists();
@@ -113,7 +136,7 @@ pub fn run(dir: &Path, root: Option<&Path>, write_pointer: bool) -> Result<Done>
         atomic_write(&p, format!("{}\n", dir.display()).as_bytes())?;
         pointer = Some(p);
     }
-    Ok(Done { created, pointer })
+    Ok(Done { created, pointer, notes })
 }
 
 fn client_path_conf(root: &Path, server: Option<&str>) -> String {
@@ -179,16 +202,8 @@ pub fn run_client(
     crate::config::check_not_tmp("staging", &cc.staging)?;
     std::fs::create_dir_all(&cc.logs).ctx(format!("cannot create {}", cc.logs.display()))?;
     std::fs::create_dir_all(&cc.cameras).ctx(format!("cannot create {}", cc.cameras.display()))?;
-    let empty = std::fs::read_dir(&cc.cameras)
-        .map(|mut d| d.next().is_none())
-        .unwrap_or(true);
-    if empty {
-        for (name, text) in STARTER_CAMERAS {
-            let p = cc.cameras.join(name);
-            atomic_write(&p, text.as_bytes())?;
-            created.push(p);
-        }
-    }
+    let mut notes = Vec::new();
+    install_shipped(&cc.cameras, STARTER_CAMERAS, &mut created, &mut notes)?;
     let mut pointer = None;
     if write_pointer {
         let p =
@@ -199,7 +214,7 @@ pub fn run_client(
         atomic_write(&p, format!("{}\n", dir.display()).as_bytes())?;
         pointer = Some(p);
     }
-    Ok(Done { created, pointer })
+    Ok(Done { created, pointer, notes })
 }
 
 #[cfg(test)]

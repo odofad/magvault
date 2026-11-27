@@ -35,7 +35,8 @@ The config directory comes from `--config`, else `MAGVAULT_CONFIG`, else
 
 ## What ingest does
 
-1. Walks the source. Skips junk (`.DS_Store`, AppleDouble `._*`, macOS volume folders).
+1. Walks the source. Every file is copied: there is no junk filter (PLAN.md "Mag rules";
+   AppleDouble `._*` files and macOS folders are copied as "other" files, never as clips).
    Refuses symlinks, devices, non-UTF-8 names and names containing `|` or control
    characters. Refuses a source that already holds `magcard.txt`/`ascmhl/` (importing mag
    folders from field drives is Phase 1) and a source inside any Magvault root.
@@ -59,8 +60,7 @@ The config directory comes from `--config`, else `MAGVAULT_CONFIG`, else
 
 Every result and every failure after the confirmation (hashing read errors, a file that
 changes size while being read, not enough space, copy and verify errors, interrupts) is
-written to `logs/YYYY-MM-DD.log` (UTC day). Junk items that were skipped are listed as a
-context line of the ingest's INFO entry.
+written to `logs/YYYY-MM-DD.log` (UTC day).
 
 Control characters in anything Magvault prints or logs (card file names, volume labels,
 ffprobe messages) are escaped (`\u{1b}`, `\n`), so a crafted file name cannot inject
@@ -95,7 +95,7 @@ consistent choice was made. Each is easy to change.
   staging dataset is refused) and is refused under `/tmp`, `/var/tmp`, `/dev/shm`. The
   hidden `.incoming` folder is not a mag and is skipped by `reconcile --all`.
 - **rsync with `--files-from`.** Copies exactly the probed file list instead of the whole
-  card directory, so junk is excluded by construction and the copy matches the hashed set.
+  card directory, so the copy matches the hashed set.
 - **Magcard backups.** Named `.magvault/magcard.YYYYMMDD-HHMMSS.backup` (UTC, PLAN.md
   "Conflict handling"); only the newest is kept (PLAN.md "Logging on the mag card":
   "single"). A `magcard.lock` file in `.magvault/` serialises rewrites.

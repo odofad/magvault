@@ -95,7 +95,7 @@ No project folders on disk. All project relationships live in the database.
 ## Mag rules (locked)
 
 - One physical card = one mag, unless explicitly split later.
-- One camera only. No mixing sources, cameras, or formats inside a mag.
+- One camera only. No mixing sources, cameras, or formats inside a mag. A card whose live media names more than one camera is never ingested silently: ingest warns and asks; `--yes` refuses unless `--mixed-ok` is given, and the mag card then records every model (`mixed_cameras`).
 - Folder name: `<YYYYMMDD>_<mag-uuid>`. Date is the **shoot day** (guessed from camera date-modified or earliest media date, confirmed by operator). Never renamed after creation.
 - Contents: exact verified copy of the card (original filenames + matching sidecars). If it was not on the SD card, it is not in the mag folder — except `magcard.txt`, the ASC MHL inventory, and the hidden `.magvault/` backups of the card.
 - No junk filter. Files that were on the card are copied, including `SALVAGE.TMP`, sidecars, and other non-media. Magvault does not drop them.
@@ -272,6 +272,11 @@ At ingest, after the card is probed and the project is selected:
 
 Project creation must offer these lists. Editing later is allowed, but the values stay from the same lists.
 
+Phase 1 implementation:
+- Stored as `projects.requirements` (`fps=25 res=HD gop=intra`). Set when the project is created: `--require-fps`, `--require-resolution`, `--require-gop` on `ingest` (server or client), or the New project popup in the TUI. An existing project keeps its values; different flags are refused.
+- The card is compared with one value per card (the clips' frame rate, resolution class 4K / HD / SD, intra or long-GOP from the codec). 23.976 counts as 24, 29.97 as 30, 59.94 as 60. A mixed card fails when any clip differs. A value the card does not report is not a mismatch ("not checked").
+- The project log is the `project_log` table; `magvault project-log <project>` shows it. The mag card gets `requirements_warning: …`. The server re-checks every client upload against its own requirements and logs the mismatch.
+
 ## Project open / closed rule
 
 - **Open** projects can receive new mags and are shown in the ingest project list.
@@ -297,6 +302,8 @@ One plain-text `.cam` file per camera, all living in the `cameras/` folder (path
 - Server (or standalone) scans the folder on startup and on a manual reload.
 - Valid files are loaded into the database / served to clients.
 - Clients never read the files directly. They request the current profile list from the server over SSH (or use a local folder when running standalone).
+- Phase 1: clients still pick from a local copy (temporary), but before copying a card they check the chosen camera, format, gamma and gamut against the list the server publishes (gate verb `cameras`). A mismatch is refused before anything is copied; offline, the cached list gives a warning and `sync` never uploads a mag the server would refuse.
+- `model:` is the string the camera writes in its clip metadata (Sony body codes such as `ILCE-7SM3`, `ILME-FX6V`), not the marketing name. A comma list allows several spellings (`AG-CX350, CX350`).
 - Ordinary operators on the ingest screen can only select from existing profiles. They cannot invent new camera, format, gamma or gamut names.
 - A starter set of common cameras will be shipped.
 
@@ -311,7 +318,7 @@ id: sony-a7siii
 
 # Detection
 vendor: Sony
-model: A7S III
+model: ILCE-7SM3
 card_layout: DCIM, PRIVATE
 filename_pattern: A001_C*.mov
 
@@ -502,17 +509,16 @@ Magvault has no internal user database. Access is the system user plus SSH keys.
 
 ### Sudo (no root)
 
-The `magvault` user never runs as root. It is granted sudo for specific ZFS commands only, and the password is still required:
+The `magvault` user never runs as root. Its only sudo right is the one root-owned helper (see "Sudo helper"); the helper runs the exact commands needed (`zpool` / `zfs` for zmags from Phase 4; ext4 format and clean of field USB drives from Phase 1). The password is still required:
 
 ```
-magvault ALL=(root) /usr/sbin/zpool, /usr/sbin/zfs
+magvault ALL=(root) /usr/lib/magvault/magvault-helper
 ```
 
-Magvault calls `sudo zpool` / `sudo zfs` when it needs to create, import, export or manage a zmag.  
-The operator must enter the sudo password. Nothing is executed until the password is accepted.  
+No direct sudo on `zpool` or `zfs`. The operator must enter the sudo password. Nothing is executed until the password is accepted.  
 Clients (`magvaultclient`) have no sudo rights on the server.
 
-On a client machine the `magvaultclient` user may be given limited, password-required sudo for local USB-prepare commands only (mount, write manifest, etc.).  
+On a client machine the operator's own account (not `magvaultclient`, which exists only on the server) may run the same helper with password-required sudo, for USB Prepare / Clean only.  
 This sudo is local to the client machine and does not grant any rights on the server.  
 All other Magvault operations run unprivileged.
 
@@ -541,7 +547,7 @@ clip001.XML | 4567 | def...
 ...
 ```
 
-ASC MHL (`ascmhl/manifest.mhl`) is written at the same time. It holds the industry-standard inventory (filenames, sizes, mtimes, SHA-256/MD5) and nothing else.
+ASC MHL (`ascmhl/manifest.mhl`) is written at the same time. It holds the industry-standard inventory (filenames, sizes, mtimes, C4 hashes; see "Hashing") and nothing else.
 
 ## Conflict handling
 
@@ -585,7 +591,7 @@ Per-file shot logging is not part of ingest.
 
 - Always 24-hour clock.
 - Date format DD/MM/YYYY.
-- Both can be set in config. Defaults are 24-hour and DD/MM/YYYY.
+- Both can be set in config (`date_format: DD/MM/YYYY | YYYY-MM-DD | MM/DD/YYYY`, `time_format: 24h | 12h` in magvault.conf). Defaults are 24-hour and DD/MM/YYYY. Stored values (magcard, database, logs) stay ISO / UTC.
 - Ingest has a system-time block (wall clock).
 - Block 2 is a card summary, not a file list:
   - Shoot date and clip time range (e.g. 11:30 – 15:43)
@@ -600,8 +606,9 @@ Local staging on the client is a temporary holding area between the card and con
 
 - The ingest screen shows a space bar for the staging cache (used / free).
 - Auto-clean removes a staged mag as soon as at least two backups exist (for example the field set and the server, or two other confirmed copies).
-- Auto-clean can be disabled. When disabled, staged mags stay until the operator clears them.
+- Auto-clean can be disabled (`staging_autoclean: no` in the client's magvault.conf). When disabled, staged mags stay until the operator clears them (`magvault staging clean`).
 - If staging is the only copy, it is never auto-cleaned.
+- The server confirming a mag is one backup. Staging + server alone keeps the staged copy; staging + server + field set removes it. `magvault staging` lists every staged mag with its state; `magvault staging clean <mag>` removes one server-confirmed mag by hand (asks first when the server is its only backup). A pending mag is never removed.
 
 ## Card dump status
 
@@ -611,7 +618,7 @@ On the card detect screen, each card shows whether it has already been dumped:
 - Yellow: dumped, but not yet two copies and uploaded to the server.
 - Green: two copies exist and the mag is uploaded to the server.
 
-Status comes from hashes / mag identity, not from the volume label.
+Status comes from hashes / mag identity, not from the volume label. Phase 1: the client records each mag it ingests with a fingerprint of its card (relative path, size and mtime of every file) in `<config>/dumps.txt`; a detected card with the same fingerprint is dumped. Copies counted: server (confirmed), staging, field set.
 
 ## Help and log keys
 
@@ -623,7 +630,7 @@ Status comes from hashes / mag identity, not from the volume label.
 Ingest can run on a client terminal (or standalone machine). After a successful commit the server owns the rest of the pipeline (proxy encode, etc.).
 
 **Copy options (selectable on the main ingest screen)**
-- Default: card → local staging → rsync to server → server confirms → autoclean staging.
+- Default: card → local staging → rsync to server → server confirms. Staging is auto-cleaned only once two backups exist (see "Client staging cache").
 - Backup USB drive can act as the staging location itself.
 - Direct card → server (optional).
 - Extra mirror to one or more backup drives at any time.
@@ -758,7 +765,7 @@ The dashboard is the first screen after launch. It shows status and is the way t
 - Does **not** show full encoder progress or zmag drive health by default. Those stay on the server.
 - Local USB/staging and recent local activity are first-class.
 
-Both versions are ratatui. Esc/q returns to the dashboard from any module. Keyboard first (arrows + Enter or single-letter shortcuts). Mouse optional.
+Both versions are ratatui. Esc returns to the dashboard from any module (blocked while a write/copy runs); `q` quits, only on the dashboard (see "Shared key convention"). Keyboard first (arrows + Enter or single-letter shortcuts). Mouse optional.
 
 ## Shared key convention (terminal)
 
@@ -770,8 +777,9 @@ One set of navigation keys for every screen. Defined once so modules stay consis
 |-----|---------|
 | `Esc` | Return to the dashboard (from any module). Blocked while a write/copy is in progress. |
 | `q` | Quit the whole program. Only on the dashboard itself. |
-| `Tab` / `Shift+Tab` | Next / previous pane |
+| `←` / `→`, `Tab` / `Shift+Tab` | Previous / next pane |
 | `↑` / `↓` | Move within a list or menu |
+| `F1` | Help for the current screen |
 | `Enter` | Confirm, open, or select the current item |
 | Mouse | Optional. Click a pane to focus it. |
 
@@ -780,16 +788,19 @@ Module-specific actions use single letters. They must not collide with the share
 ### Dashboard
 | Key | Action |
 |-----|--------|
-| letter | Open module (`i` Ingest, `g` Logging, `l` Library, `e` Export bins, `z` Zmag, `p` Profile Editor, `v` Logs, `s` Settings) |
+| letter | Open module (`i` Ingest, `g` Logging, `l` Library, `e` Export bins, `z` Zmag, `p` Profile Editor, `v` Logs, `s` Settings, `h` Server dashboard over SSH (client)) |
 | `r` | Refresh status |
+| `y` | Sync pending mags (client) |
+| `d` | Show / hide details (paths, UUIDs, device names) |
 
 ### Ingest
 | Key | Action |
 |-----|--------|
-| `n` | New project |
+| `n` | New project (then its requirements from the fixed lists) |
 | `r` | Rescan for cards |
 | `p` | Pull (start verified copy) |
 | `o` | Prepare selected not-valid USB (sudo) |
+| `c` | Clean a fully synced field set (sudo) |
 | `x` | Abort (pulling state only) |
 | `l` | Show log |
 
@@ -1242,7 +1253,7 @@ Full rationale and the complete specification are in `docs/technical-review-and-
 - Full client ingest (staging, USB, direct, mirror).
 - Prepare formats USB as ext4.
 - Reconnect-and-sync, pending-sync safety.
-- Server confirmation + autoclean.
+- Server confirmation + autoclean (after two backups).
 
 ### Phase 2 – Proxies, encoder, dashboards
 - 320p encode queue and rules.

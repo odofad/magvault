@@ -5,6 +5,7 @@
 //! status, next action. Paths, UUIDs, device nodes and internal codes only with `d`.
 
 use super::app::{set_state, App, Field, InputKind, Job, Pane, Popup, PrepStep, ProjectSel, Screen, Stub, SudoOp, TargetRow, FIELDS, MENU};
+use crate::staging::DumpStatus;
 use super::data::{DriveRow, ServerState};
 use crate::fieldset::Disk;
 use crate::ingest::is_mag_folder;
@@ -236,10 +237,14 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::Ingest => ingest(f, area, app),
         Screen::Stub(s) => stub(f, area, app, s),
     }
-    if let Some(j) = &app.job {
-        job(f, area, app, j);
-    } else if let Some(p) = &app.popup {
-        popup(f, area, app, p);
+    match &app.job {
+        Some(j) if !j.inline => job(f, area, app, j),
+        Some(_) => {}
+        None => {
+            if let Some(p) = &app.popup {
+                popup(f, area, app, p);
+            }
+        }
     }
 }
 
@@ -256,11 +261,12 @@ fn dashboard(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::raw(format!("{}[{k}] {name}", sel(i == app.dash_sel))));
         lines.push(Line::raw(""));
     }
-    lines.push(Line::styled(" g l s: later phases", dim()));
+    lines.push(Line::styled(" g l h s: later phases", dim()));
     lines.push(Line::raw(""));
     lines.push(Line::styled(" ↑↓ move   Enter open", dim()));
     lines.push(Line::styled(" y sync   r refresh", dim()));
-    lines.push(Line::styled(" d details   q quit", dim()));
+    lines.push(Line::styled(" d details   F1 help", dim()));
+    lines.push(Line::styled(" q quit", dim()));
     f.render_widget(Paragraph::new(lines).block(pane("1 Modules", true)), menu);
 
     let [next, top, recent] =
@@ -296,9 +302,18 @@ fn dashboard(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(s).wrap(Wrap { trim: false }).block(pane("2 Server", false)), srv);
 
     let n = app.snap.staging_pending.len();
+    let k = app.snap.staging_synced.len();
+    let staged = match (n, k) {
+        (0, 0) => " Local staging   empty".to_string(),
+        (n, 0) => format!(" Local staging   {n} mag(s) waiting for the server"),
+        (0, k) => format!(" Local staging   {k} mag(s) on the server, kept (one backup)"),
+        (n, k) => format!(" Local staging   {n} waiting for the server · {k} on the server, kept"),
+    };
+    let (used, free) = app.snap.staging_usage;
     let mut l = vec![
         Line::raw(""),
-        Line::raw(if n == 0 { " Local staging   empty".to_string() } else { format!(" Local staging   {n} mag(s) waiting for the server") }),
+        Line::raw(staged),
+        Line::raw(format!("                 {}  {} used / {} free", space_bar(used, free, 16), human(used), human(free))),
     ];
     if tech {
         l.push(Line::styled(format!("                 {}", app.snap.staging.display()), dim()));
@@ -320,7 +335,7 @@ fn dashboard(f: &mut Frame, area: Rect, app: &App) {
     };
     f.render_widget(Paragraph::new(lines).block(pane("4 Recent activity", false)), recent);
     f.render_widget(
-        Paragraph::new(" ↑↓ Enter open · i ingest · y sync · r refresh · d details · g logging · l library · s server dashboard · q quit")
+        Paragraph::new(" ↑↓ Enter open · i ingest · y sync · r refresh · d details · h server dashboard · s settings · F1 help · q quit")
             .style(dim()),
         foot,
     );
@@ -333,8 +348,9 @@ fn stub(f: &mut Frame, area: Rect, app: &App, s: Stub) {
         Stub::Library => ("Library", "Library comes in Phase 3 (PLAN.md roadmap)."),
         Stub::ServerDashboard => (
             "Server dashboard",
-            "The server dashboard comes in Phase 2. It will open on the server over SSH.",
+            "The server dashboard comes in Phase 2. It will open on the server over SSH (key h).",
         ),
+        Stub::Settings => ("Settings", "Settings come in Phase 5 (PLAN.md roadmap). Until then: magvault.conf."),
     };
     header(f, head, title, app);
     f.render_widget(Paragraph::new(format!("\n  {text}")).block(pane(title, true)), body);
@@ -343,12 +359,60 @@ fn stub(f: &mut Frame, area: Rect, app: &App, s: Stub) {
 
 // ---- ingest ---------------------------------------------------------------------------------
 
+fn dump_style(d: &DumpStatus) -> Style {
+    match d {
+        DumpStatus::NotDumped => Style::default().fg(Color::Red),
+        DumpStatus::Dumped { .. } => Style::default().fg(Color::Yellow),
+        DumpStatus::Safe { .. } => good(),
+    }
+}
+
+/// Word-wrap `text` to `width` columns, every line starting with `indent`.
+fn wrap_indent(text: &str, width: usize, indent: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::from(indent);
+    for w in text.split_whitespace() {
+        if cur.trim().is_empty() {
+            cur.push_str(w);
+        } else if cur.chars().count() + 1 + w.chars().count() <= width {
+            cur.push(' ');
+            cur.push_str(w);
+        } else {
+            out.push(std::mem::replace(&mut cur, format!("{indent}{w}")));
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// `██████░░░░░░` for a used / total ratio.
+fn space_bar(used: u64, free: u64, w: usize) -> String {
+    let total = used + free;
+    let n = if total == 0 { 0 } else { ((used as f64 / total as f64) * w as f64).round() as usize }.min(w);
+    format!("{}{}", "█".repeat(n), "░".repeat(w - n))
+}
+
+/// Dump status of the chosen card (None: a typed path, not a detected card).
+fn chosen_dump(app: &App) -> Option<&DumpStatus> {
+    let src = app.source.as_ref()?;
+    let i = app.snap.cards.iter().position(|c| &c.volume.mount == src)?;
+    app.snap.dump.get(i)
+}
+
 fn ingest(f: &mut Frame, area: Rect, app: &App) {
     let tech = app.show_tech;
+    let st = app.snap.display;
     let targets = app.targets();
-    let target_rows = targets.len().min(8);
+    // The top row needs 23 lines (System time 3 + Project 7 + Details 13); Targets get
+    // what is left (they scroll), the Log only when there is room for it.
+    // At 150x42 that leaves four target rows and the Log (as in the mockup); more targets
+    // scroll inside the pane.
+    let avail = area.height.saturating_sub(6) as usize;
+    let log_h: u16 = if avail >= 23 + 3 + 4 + 6 { 6 } else { 0 };
+    let target_rows = targets.len().min(8).min(avail.saturating_sub(23 + 3 + log_h as usize)).max(2);
     let target_h = target_rows as u16 + 3;
-    let log_h = if area.height >= 42 { 6 } else { 0 };
     let [head, mid, bar, tgt, logp, foot] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Fill(1),
@@ -360,26 +424,37 @@ fn ingest(f: &mut Frame, area: Rect, app: &App) {
     .areas(area);
     header(f, head, "Ingest", app);
     let (det_w, right_w) = if area.width >= 150 { (34, 52) } else { (30, 40) };
-    let [det, files, right] =
+    let [det, cardp, right] =
         Layout::horizontal([Constraint::Length(det_w), Constraint::Fill(1), Constraint::Length(right_w)]).areas(mid);
-    let [proj, details] = Layout::vertical([Constraint::Length(8), Constraint::Fill(1)]).areas(right);
+    let [clock, proj, details] =
+        Layout::vertical([Constraint::Length(3), Constraint::Length(8), Constraint::Fill(1)]).areas(right);
+    let right_in = right_w.saturating_sub(2) as usize;
+    let card_in = cardp.width.saturating_sub(2) as usize;
+    let locked = app.job.as_ref().is_some_and(|j| j.inline);
 
-    // 1 Detected
+    // 1 Detected: each card with its dump status (red / yellow / green).
+    let inner_w = det_w.saturating_sub(4) as usize;
     let mut l = vec![Line::raw("")];
     for (i, c) in app.snap.cards.iter().enumerate() {
         let name = c.camera.as_ref().map(|(_, n)| n.clone()).unwrap_or_else(|| "camera not recognised".into());
-        let chosen = app.source.as_ref() == Some(&c.volume.mount);
-        l.push(Line::raw(format!("{}{}", sel(app.pane == Pane::Detected && i == app.card_sel), card_label(&c.volume.mount))));
-        l.push(Line::raw(format!("  {name} · {}", human(c.bytes))));
+        let size = human(c.bytes);
+        let pad = inner_w.saturating_sub(name.chars().count() + size.chars().count()).max(1);
+        l.push(Line::raw(format!("{}{name}{}{size}", sel(app.pane == Pane::Detected && i == app.card_sel), " ".repeat(pad))));
         if tech {
-            l.push(Line::styled(format!("  {} · {} · {}", c.volume.device, c.volume.fstype, c.layout), dim()));
+            l.push(Line::styled(format!("  {} · {}", c.volume.device, c.volume.fstype), dim()));
+            l.push(Line::styled(format!("  {}", c.volume.mount.display()), dim()));
+        } else {
+            l.push(Line::styled(format!("  {} · {}", card_label(&c.volume.mount), c.volume.fstype), dim()));
         }
-        let state = match (&c.problem, chosen) {
-            (Some(p), _) => format!("  ✖ {}", scrub(p, tech)),
-            (None, true) => "  ● selected".into(),
-            (None, false) => "  ● ready".into(),
-        };
-        l.push(Line::raw(state));
+        let chosen = if app.source.as_ref() == Some(&c.volume.mount) { " · selected" } else { "" };
+        match (&c.problem, app.snap.dump.get(i)) {
+            (Some(p), _) => l.push(Line::styled(format!("  ✖ {}", scrub(p, tech)), warn())),
+            (None, Some(d)) => l.push(Line::from(vec![
+                Span::styled("  ● ", dump_style(d)),
+                Span::raw(format!("{}{chosen}", d.text())),
+            ])),
+            (None, None) => l.push(Line::raw(format!("  ● ready{chosen}"))),
+        }
         l.push(Line::raw(""));
     }
     if app.snap.cards.is_empty() {
@@ -390,55 +465,106 @@ fn ingest(f: &mut Frame, area: Rect, app: &App) {
     l.push(Line::raw(format!("{}type a path…", sel(app.pane == Pane::Detected && manual))));
     if let Some(s) = &app.source {
         if !app.snap.cards.iter().any(|c| &c.volume.mount == s) {
-            l.push(Line::raw(format!("  ● {}", if tech { s.display().to_string() } else { card_label(s) })));
+            l.push(Line::raw(format!("  ● {} · selected", if tech { s.display().to_string() } else { card_label(s) })));
         }
     }
-    l.push(Line::raw(""));
-    l.push(Line::styled(" r rescan · Enter pick", dim()));
+    let used = l.len() as u16 + 2;
+    for _ in used..det.height.saturating_sub(1) {
+        l.push(Line::raw(""));
+    }
+    l.push(Line::styled(" r rescan    ↑↓ item", dim()));
     f.render_widget(Paragraph::new(l).block(pane("1 Detected", app.pane == Pane::Detected)), det);
 
-    // 2 Files
-    let mut l = Vec::new();
+    // 2 Card: a summary, no file list (PLAN.md "Time display").
+    let mut l = vec![Line::raw("")];
+    let check = app.req_check();
+    let req = app.requirements();
     match (&app.source, &app.preview) {
         (None, _) => l.push(Line::styled(" pick a card in 1 Detected", dim())),
         (Some(s), None) => l.push(Line::raw(format!(" {}  · reading the card…", card_label(s)))),
         (Some(_), Some(Err(e))) => l.push(Line::styled(format!(" cannot ingest: {}", scrub(e, tech)), warn())),
         (Some(s), Some(Ok(p))) => {
-            l.push(Line::raw(format!(" {}", if tech { s.display().to_string() } else { card_label(s) })));
-            let rows = (files.height as usize).saturating_sub(6);
-            for (rel, role, size) in p.files.iter().skip(app.files_scroll).take(rows) {
-                let name = if tech { rel.clone() } else { card_label(Path::new(rel)) };
-                l.push(Line::raw(format!(" {name}  [{role}]  {}", human(*size))));
+            let sm = &p.summary;
+            let name = app
+                .snap
+                .cards
+                .iter()
+                .find(|c| &c.volume.mount == s)
+                .and_then(|c| c.camera.as_ref().map(|(_, n)| n.clone()))
+                .unwrap_or_else(|| card_label(s));
+            l.push(Line::raw(format!(" Card         {name} · {}", human(p.total))));
+            l.push(Line::styled(format!("              {}", if tech { s.display().to_string() } else { card_label(s) }), dim()));
+            l.push(Line::raw(""));
+            let shoot = sm.shoot_range(&st).unwrap_or_else(|| "unknown".into());
+            l.push(Line::raw(format!(" Shoot date   {shoot}")));
+            l.push(Line::raw(format!(" Clips        {}", sm.clips)));
+            l.push(Line::raw(format!(" Total size   {}", human(sm.bytes))));
+            let against = |want: Option<String>, bad: bool| match (want, bad) {
+                (Some(w), true) => format!("  (project requires {w})"),
+                _ => String::new(),
+            };
+            let bad = |what: &str| check.as_ref().is_some_and(|c| c.mismatches.iter().any(|m| m.starts_with(what)));
+            let fr = against(req.fps.map(|f| format!("{f} fps")), bad("frame rate"));
+            let rs = against(req.res.map(|r| r.as_str().to_string()), bad("resolution"));
+            let gp = against(req.gop.map(|g| g.as_str().to_string()), bad("GOP"));
+            let row = |label: &str, v: String, extra: String| {
+                if extra.is_empty() {
+                    Line::raw(format!(" {label:<12} {v}"))
+                } else {
+                    Line::from(vec![Span::raw(format!(" {label:<12} {v}")), Span::styled(extra, warn())])
+                }
+            };
+            l.push(row("Frame rate", sm.fps_label(), fr));
+            l.push(row("Resolution", sm.res_label(), rs));
+            l.push(row("GOP", sm.gop_label(), gp));
+            l.push(Line::raw(""));
+            match chosen_dump(app) {
+                Some(d) => l.push(Line::from(vec![Span::raw(" Dump status  "), Span::styled("● ", dump_style(d)), Span::raw(d.text())])),
+                None if !app.snap.cards.iter().any(|c| &c.volume.mount == s) => l.push(Line::styled(" Dump status  not checked (typed path)", dim())),
+                None => {}
+            }
+            if !p.mixed.is_empty() {
+                l.push(Line::raw(""));
+                for w in wrap_indent(&format!("⚠ More than one camera on this card: {}. One mag is one camera; Pull asks first.", p.mixed.join(", ")), card_in, " ") {
+                    l.push(Line::styled(w, warn()));
+                }
             }
             l.push(Line::raw(""));
-            l.push(Line::raw(format!(" {} files · {}", p.files.len(), human(p.total))));
+            for w in wrap_indent("One frame rate and one resolution for the whole card. Shows \"mixed\" when clips differ. No file list.", card_in, " ") {
+                l.push(Line::styled(w, dim()));
+            }
         }
     }
-    f.render_widget(Paragraph::new(l).block(pane("2 Files", app.pane == Pane::Files)), files);
+    f.render_widget(Paragraph::new(l).wrap(Wrap { trim: false }).block(pane("2 Card", app.pane == Pane::Card)), cardp);
 
-    // 3 Project
-    let mut l = Vec::new();
+    // System time (wall clock).
+    f.render_widget(Paragraph::new(format!(" {}", st.now_line(app.now()))).block(pane("System time", false)), clock);
+
+    // 3 Project: name, requirements, the warning.
     let chosen = match &app.project {
         Some(ProjectSel::Existing { name, id }) if tech => format!("{name}  ({id})"),
         Some(ProjectSel::Existing { name, .. }) => name.clone(),
-        Some(ProjectSel::New { name }) => format!("{name}  (new)"),
+        Some(ProjectSel::New { name, .. }) => format!("{name}  (new)"),
         None => "(pick one)".into(),
     };
-    l.push(Line::raw(format!(" Project  {chosen}")));
-    let list = app.projects();
-    let rows = (proj.height as usize).saturating_sub(4);
-    let start = app.project_sel.saturating_sub(rows.saturating_sub(1));
-    for (i, p) in list.iter().enumerate().skip(start).take(rows) {
-        let name = match p {
-            ProjectSel::Existing { name, .. } => name.clone(),
-            ProjectSel::New { name } => format!("{name} (new)"),
-        };
-        l.push(Line::raw(format!(" {}{name}", sel(app.pane == Pane::Project && i == app.project_sel))));
+    let mut l = vec![Line::raw(format!("{}Project    {chosen}  ▾", sel(app.pane == Pane::Project)))];
+    if app.project.is_some() {
+        l.push(Line::raw(format!("  Requires   {}", req.display())));
     }
-    if list.is_empty() {
-        l.push(Line::styled(" no open projects known", dim()));
+    match &check {
+        Some(c) if !c.ok() => {
+            for w in wrap_indent(crate::cardinfo::WARNING, right_in, "  ") {
+                l.push(Line::styled(w, warn()));
+            }
+            for w in wrap_indent("Not a hard stop. Logged to the project.", right_in, "  ") {
+                l.push(Line::raw(w));
+            }
+        }
+        Some(c) if !c.unchecked.is_empty() => l.push(Line::styled(format!("  not checked: {}", c.unchecked.join(", ")), dim())),
+        Some(_) => l.push(Line::styled("  ✓ card meets the requirements", good())),
+        None if app.project.is_none() => l.push(Line::styled("  Enter pick · n new project", dim())),
+        None => {}
     }
-    l.push(Line::styled(" n new project · open projects only", dim()));
     f.render_widget(Paragraph::new(l).block(pane("3 Project", app.pane == Pane::Project)), proj);
 
     // 4 Details
@@ -447,7 +573,7 @@ fn ingest(f: &mut Frame, area: Rect, app: &App) {
     let shoot = if d.shoot_date.is_empty() {
         "(pick one)".to_string()
     } else {
-        format!("{}   {}", d.shoot_date, if d.shoot_edited { "given" } else { "guessed" })
+        format!("{}  {}", st.iso_date(&d.shoot_date), if d.shoot_edited { "given" } else { "guessed" })
     };
     let notes = if d.notes.is_empty() { "(optional)".to_string() } else { d.notes.clone() };
     let model = match (&d.model, &d.model_hint) {
@@ -458,47 +584,66 @@ fn ingest(f: &mut Frame, area: Rect, app: &App) {
     };
     let vals = [cam, d.format.clone(), d.gamma.clone(), d.gamut.clone(), shoot, notes, model];
     let names = ["Camera", "Format", "Gamma", "Gamut", "Shoot day", "Notes", "Model"];
-    let mut l = vec![Line::raw("")];
+    let mut l = Vec::new();
     for i in 0..FIELDS.len() {
         let v = if vals[i].is_empty() { "-".to_string() } else { vals[i].clone() };
-        l.push(Line::raw(format!("{}{:<10} {v}", sel(app.pane == Pane::Details && i == app.detail_sel), names[i])));
+        let dd = if i < 4 { "  ▾" } else { "" };
+        l.push(Line::raw(format!("{}{:<10} {v}{dd}", sel(app.pane == Pane::Details && i == app.detail_sel), names[i])));
     }
-    l.push(Line::raw(""));
     let missing = app.missing();
-    if missing.is_empty() {
-        l.push(Line::styled(" ✓ ready to pull", good()));
-    } else {
-        l.push(Line::raw(" Confirm before pull"));
-        l.push(Line::styled(format!(" missing: {}", missing.join(", ")), warn()));
-    }
-    l.push(Line::styled(" Missing profile? Admin only.", dim()));
-    f.render_widget(
-        Paragraph::new(l).wrap(Wrap { trim: false }).block(pane("4 Details", app.pane == Pane::Details)),
-        details,
-    );
+    let has = |what: &str| !missing.iter().any(|m| m.contains(what));
+    let tick = |ok: bool| if ok { "✓" } else { "✗" };
+    let target_ok = app.route().is_ok() && !missing.iter().any(|m| m.contains("server ready"));
+    l.push(Line::raw(if locked { " Inputs locked until verified" } else { " Confirm before pull" }));
+    let line1 = format!(" {} camera  {} gamma/gamut", tick(has("camera")), tick(app.camera().is_some()));
+    let line2 = format!(" {} project  {} shoot day  {} target", tick(has("project")), tick(has("shoot day")), tick(target_ok));
+    let style = if missing.is_empty() { good() } else { Style::default() };
+    l.push(Line::styled(line1, style));
+    l.push(Line::styled(line2, style));
+    f.render_widget(Paragraph::new(l).block(pane("4 Details", app.pane == Pane::Details)), details);
 
-    // Ingest bar: route and next action
-    let dest = match app.route() {
-        Ok((v, m)) => {
-            let set = app.use_set.clone().unwrap_or_default();
-            match (v, m) {
-                (crate::client_ingest::Via::Staging, false) => "card → local staging → server".to_string(),
-                (crate::client_ingest::Via::Staging, true) => format!("card → local staging + field set {set} → server"),
-                (crate::client_ingest::Via::Set, _) => format!("card → field set {set} → server"),
-                (crate::client_ingest::Via::Direct, _) => "card → server (no local copy)".to_string(),
+    // Ingest bar: PULL and the route, or the running pull (x ABORT, progress, stages).
+    match app.job.as_ref().filter(|j| j.inline) {
+        Some(j) => {
+            let block = Block::default().borders(Borders::ALL).border_type(BorderType::Double).title(" Ingesting ");
+            let inner = block.inner(bar);
+            f.render_widget(block, bar);
+            let [top, stages] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(inner);
+            let [abort, gauge] = Layout::horizontal([Constraint::Length(11), Constraint::Fill(1)]).areas(top);
+            f.render_widget(Paragraph::new(if j.cancelling { " aborting…" } else { " x ABORT" }).style(warn()), abort);
+            if j.total > 0 {
+                let ratio = (j.done as f64 / j.total as f64).clamp(0.0, 1.0);
+                let label = format!("{} / {}  ({:.0}%)", human(j.done), human(j.total), ratio * 100.0);
+                f.render_widget(Gauge::default().gauge_style(good()).ratio(ratio).label(label), gauge);
+            } else {
+                f.render_widget(Paragraph::new(format!(" {} …", j.stage)).style(dim()), gauge);
             }
+            f.render_widget(Paragraph::new(pull_stages(&j.stage)), stages);
         }
-        Err(e) => e,
-    };
-    let server = if app.use_server { "" } else { "  · server later (mag stays pending)" };
-    f.render_widget(
-        Paragraph::new(vec![
-            Line::raw(format!(" [ p  PULL ]  {dest}{server}")),
-            Line::styled(format!(" Next: {}", ingest_next(app)), Style::default().add_modifier(Modifier::BOLD)),
-        ])
-        .block(pane("Ingest", false)),
-        bar,
-    );
+        None => {
+            let dest = match app.route() {
+                Ok((v, m)) => {
+                    let set = app.use_set.clone().unwrap_or_default();
+                    match (v, m) {
+                        (crate::client_ingest::Via::Staging, false) => "card → local staging → server".to_string(),
+                        (crate::client_ingest::Via::Staging, true) => format!("card → local staging + field set {set} → server"),
+                        (crate::client_ingest::Via::Set, _) => format!("card → field set {set} → server"),
+                        (crate::client_ingest::Via::Direct, _) => "card → server (no local copy)".to_string(),
+                    }
+                }
+                Err(e) => e,
+            };
+            let server = if app.use_server { "" } else { "  · server later (mag stays pending)" };
+            f.render_widget(
+                Paragraph::new(vec![
+                    Line::raw(format!(" [ p  PULL ]  {dest}{server}  · originals + magcard.txt + ascmhl/ · SHA-256 verified")),
+                    Line::styled(format!(" Next: {}", ingest_next(app)), Style::default().add_modifier(Modifier::BOLD)),
+                ])
+                .block(pane("Ingest", false)),
+                bar,
+            );
+        }
+    }
 
     // 5 Targets
     let mut l = Vec::new();
@@ -508,8 +653,24 @@ fn ingest(f: &mut Frame, area: Rect, app: &App) {
         let check = |b: bool| if b { "[x]" } else { "[ ]" };
         let line = match t {
             TargetRow::Staging => {
-                let path = if tech { format!("   {}", app.snap.staging.display()) } else { String::new() };
-                format!("{cur}{} Local staging{path}", check(app.use_staging))
+                let (used, free) = app.snap.staging_usage;
+                let path = if tech { format!("  {}", app.snap.staging.display()) } else { String::new() };
+                let (p, k) = (app.snap.staging_pending.len(), app.snap.staging_synced.len());
+                let mut held = Vec::new();
+                if p > 0 {
+                    held.push(format!("{p} waiting"));
+                }
+                if k > 0 {
+                    held.push(format!("{k} on server, kept"));
+                }
+                let held = if held.is_empty() { String::new() } else { format!("  · {}", held.join(" · ")) };
+                format!(
+                    "{cur}{} Local staging   {}  {} used / {} free{held}{path}",
+                    check(app.use_staging),
+                    space_bar(used, free, 20),
+                    human(used),
+                    human(free)
+                )
             }
             TargetRow::Server => {
                 let st = match &app.snap.server {
@@ -531,7 +692,7 @@ fn ingest(f: &mut Frame, area: Rect, app: &App) {
                     ""
                 };
                 format!(
-                    "{cur}{} Field set       {}  {} · {}{action}",
+                    "{cur}{} USB set         {}  master + slave {} · {}{action}",
                     check(app.use_set.as_deref() == Some(&s.label)),
                     s.label,
                     human(s.set_size),
@@ -547,25 +708,106 @@ fn ingest(f: &mut Frame, area: Rect, app: &App) {
         };
         l.push(Line::raw(line));
     }
+    // One footer line: the no-backup warning (PLAN.md copy options) and the staging rule.
+    let (long, short) = if app.snap.autoclean {
+        (
+            "Staging auto-cleans once two backups exist. Can be disabled. Never cleaned if it is the only copy.",
+            "Staging auto-cleans after two backups (can be disabled).",
+        )
+    } else {
+        (
+            "Staging auto-clean is off (staging_autoclean: no): staged mags stay until `magvault staging clean`.",
+            "Staging auto-clean is off.",
+        )
+    };
+    let width = tgt.width.saturating_sub(2) as usize;
     match app.target_warning() {
-        Some(w) => l.push(Line::styled(format!("[!] {w}"), warn())),
-        None => l.push(Line::styled(
-            "    Prepare asks for the sudo password; not offered on a set while any mag waits for the server.",
-            dim(),
-        )),
+        Some(w) => {
+            let w = format!("[!] {w}");
+            let mut spans = vec![Span::styled(w.clone(), warn())];
+            if w.chars().count() + 5 + short.chars().count() <= width {
+                spans.push(Span::styled(format!("  ·  {short}"), dim()));
+            }
+            l.push(Line::from(spans));
+        }
+        None => l.push(Line::styled(format!("    {long}"), dim())),
     }
-    f.render_widget(Paragraph::new(l).block(pane("5 Targets", app.pane == Pane::Targets)), tgt);
+    let hidden = targets.len().saturating_sub(first + target_rows);
+    let title = if hidden > 0 { format!("5 Targets · {hidden} more below (↓)") } else { "5 Targets".to_string() };
+    f.render_widget(Paragraph::new(l).block(pane(&title, app.pane == Pane::Targets)), tgt);
 
     if log_h > 0 {
         let n = (log_h as usize).saturating_sub(2);
         let lines: Vec<Line> = app.log.iter().rev().take(n).rev().map(|s| Line::raw(format!(" {}", scrub(s, tech)))).collect();
         f.render_widget(Paragraph::new(lines).block(pane("Log", false)), logp);
     }
-    f.render_widget(
-        Paragraph::new(" Tab pane · ↑↓ move · Enter pick · n project · r rescan · p PULL · y sync · o Prepare · c Clean · d details · Esc back")
-            .style(dim()),
-        foot,
-    );
+    let keys = if locked {
+        " x abort ingest  ·  d details  ·  inputs locked until verified  ·  Esc blocked while copying"
+    } else {
+        " ←→ pane · ↑↓ item · Enter pick · n new project · r rescan · p PULL · o prepare · c clean · F1 help · Esc dashboard"
+    };
+    f.render_widget(Paragraph::new(keys).style(dim()), foot);
+}
+
+/// `● hash  ○ copy  ○ verify  ○ server commit` from the current progress label.
+fn pull_stages(stage: &str) -> Line<'static> {
+    const STAGES: [(&str, &str); 4] = [("hash", "hashing"), ("copy", "copying"), ("verify", "verifying"), ("server commit", "server")];
+    let s = stage.to_lowercase();
+    let cur = STAGES.iter().position(|(_, k)| s.contains(k));
+    let mut spans = vec![Span::raw(" ")];
+    for (i, (name, _)) in STAGES.iter().enumerate() {
+        let (dot, style) = match cur {
+            Some(c) if i < c => ("✓ ", good()),
+            Some(c) if i == c => ("● ", warn()),
+            _ => ("○ ", dim()),
+        };
+        spans.push(Span::styled(format!("{dot}{name}"), style));
+        spans.push(Span::raw("   "));
+    }
+    Line::from(spans)
+}
+
+/// F1 text for a screen.
+fn help_lines(screen: Screen) -> (String, Vec<String>) {
+    let shared = vec![
+        "".to_string(),
+        "  Shared keys".to_string(),
+        "  ←→ / Tab   move between panes        ↑↓   select the item".to_string(),
+        "  Enter      confirm, open, select     Esc  back to the dashboard".to_string(),
+        "  F1         this help                 q    quit (dashboard only)".to_string(),
+        "  d          show / hide details (paths, UUIDs, device names)".to_string(),
+    ];
+    let (title, mut l) = match screen {
+        Screen::Dashboard => (
+            "Help · Dashboard",
+            vec![
+                "  i Ingest   g Logging   l Library   h Server dashboard   s Settings".to_string(),
+                "  y sync pending mags with the server   r refresh".to_string(),
+                "  Logging, Library, Server dashboard and Settings come in later phases.".to_string(),
+            ],
+        ),
+        Screen::Ingest => (
+            "Help · Ingest",
+            vec![
+                "  1 Detected  pick a card (dot: red not dumped, yellow dumped but not yet safe,".to_string(),
+                "              green two copies and on the server)".to_string(),
+                "  2 Card      shoot date and clip times, clips, size, frame rate, resolution".to_string(),
+                "  3 Project   Enter picks; n new project with fixed requirements (fps,".to_string(),
+                "              resolution, GOP). A card that does not meet them is a warning,".to_string(),
+                "              not a stop; it is logged to the project.".to_string(),
+                "  4 Details   camera, format, gamma, gamut from the profile; shoot day; notes".to_string(),
+                "  5 Targets   local staging, server, field set (Enter / space toggles)".to_string(),
+                "".to_string(),
+                "  p pull   o Prepare a USB drive   c Clean a synced set   y sync   r rescan   l log".to_string(),
+                "  While pulling: x aborts (nothing is committed).".to_string(),
+                "  Staging is cleaned once two backups exist (server + field set); never".to_string(),
+                "  when it is the only copy. A card with several cameras asks before Pull.".to_string(),
+            ],
+        ),
+        Screen::Stub(_) => ("Help", vec!["  This module comes in a later phase. Esc returns to the dashboard.".to_string()]),
+    };
+    l.extend(shared);
+    (title.to_string(), l)
 }
 
 // ---- popups ---------------------------------------------------------------------------------
@@ -612,6 +854,59 @@ fn job(f: &mut Frame, area: Rect, app: &App, j: &Job) {
 fn popup(f: &mut Frame, area: Rect, app: &App, p: &Popup) {
     let tech = app.show_tech;
     let (title, lines, w): (String, Vec<Line>, u16) = match p {
+        Popup::Help(screen) => {
+            let (t, h) = help_lines(*screen);
+            let mut l: Vec<Line> = vec![Line::raw("")];
+            l.extend(h.into_iter().map(Line::raw));
+            l.push(Line::raw(""));
+            l.push(Line::styled("  any key closes", dim()));
+            (t, l, 96)
+        }
+        Popup::Log => {
+            let mut l: Vec<Line> = vec![Line::raw("")];
+            if app.log.is_empty() {
+                l.push(Line::styled("  nothing logged yet", dim()));
+            }
+            l.extend(app.log.iter().rev().take(24).rev().map(|s| Line::raw(format!("  {}", scrub(s, tech)))));
+            l.push(Line::raw(""));
+            l.push(Line::styled("  any key closes", dim()));
+            ("Ingest log".into(), l, 110)
+        }
+        Popup::Requirements { name, row, req } => {
+            let v = |o: Option<String>| o.unwrap_or_else(|| "none".into());
+            let rows = [
+                ("Frame rate", v(req.fps.map(|f| format!("{f} fps")))),
+                ("Resolution", v(req.res.map(|r| r.as_str().to_string()))),
+                ("GOP", v(req.gop.map(|g| g.as_str().to_string()))),
+            ];
+            let mut l = vec![
+                Line::raw(""),
+                Line::raw(format!("  New project  {name}")),
+                Line::raw(""),
+                Line::raw("  Requirements (fixed lists; none = no check):"),
+            ];
+            for (i, (label, val)) in rows.iter().enumerate() {
+                l.push(Line::raw(format!("  {}{label:<11} ◀ {val} ▶", sel(i == *row))));
+            }
+            l.push(Line::raw(""));
+            l.push(Line::styled("  Frame rate 24 25 30 50 60 · Resolution 4K HD SD · GOP intra, long-GOP", dim()));
+            l.push(Line::styled("  ←→ change · ↑↓ row · Enter create · Esc cancel", dim()));
+            ("New project".into(), l, 80)
+        }
+        Popup::Mixed { models, args } => {
+            let cam = args.base.camera.clone().unwrap_or_default();
+            let l = vec![
+                Line::raw(""),
+                Line::styled(format!("  This card holds clips from more than one camera: {}.", models.join(", ")), warn()),
+                Line::raw(""),
+                Line::raw("  One mag is one camera. Pulling makes the whole card one mag"),
+                Line::raw(format!("  labelled {cam}. The mag card records both models.")),
+                Line::raw(""),
+                Line::raw("  [ Enter  Pull as one mag anyway ]"),
+                Line::styled("  Esc  Cancel · nothing is copied", dim()),
+            ];
+            ("Mixed cameras".into(), l, 84)
+        }
         Popup::Message(m) => {
             let mut l: Vec<Line> = vec![Line::raw("")];
             l.extend(m.iter().map(|s| Line::raw(format!("  {}", scrub(s, tech)))));
@@ -640,7 +935,7 @@ fn popup(f: &mut Frame, area: Rect, app: &App, p: &Popup) {
             let what = match kind {
                 InputKind::ManualPath => "Card path (a mounted card or a folder)",
                 InputKind::NewProject => "New project name (an open project with this name is reused)",
-                InputKind::ShootDate => "Shoot day (YYYY-MM-DD)",
+                InputKind::ShootDate => "Shoot day (DD/MM/YYYY or YYYY-MM-DD)",
                 InputKind::Notes => "Mag notes (optional)",
                 InputKind::SetLabel => "Set label (A-Z, 0-9, '-', up to 12)",
                 InputKind::Model => "Camera model as you name it (empty = keep what the card says)",
@@ -657,6 +952,7 @@ fn popup(f: &mut Frame, area: Rect, app: &App, p: &Popup) {
         }
         Popup::Picker { field, items, sel: s } => {
             let name = match field {
+                Field::Project => "Project",
                 Field::Camera => "Camera profile",
                 Field::Format => "File format",
                 Field::Gamma => "Gamma",
@@ -668,7 +964,10 @@ fn popup(f: &mut Frame, area: Rect, app: &App, p: &Popup) {
                 l.push(Line::raw(format!("  {}{it}", sel(i == *s))));
             }
             l.push(Line::raw(""));
-            l.push(Line::styled("  values from existing profiles only · Enter pick · Esc cancel", dim()));
+            l.push(Line::styled(
+                if *field == Field::Project { "  open projects only · Enter pick · Esc cancel" } else { "  values from existing profiles only · Enter pick · Esc cancel" },
+                dim(),
+            ));
             (name.into(), l, 70)
         }
         Popup::Clean { label, mags } => {

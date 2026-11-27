@@ -3,12 +3,15 @@
 //! (`client_ingest::run`, `usb::prepare_master`, `usb::prepare_slave`, `usb::clean`).
 //!
 //! Keys follow PLAN.md "Shared key convention": Esc back to the dashboard (or closes a
-//! popup), q quits only on the dashboard, Tab / Shift+Tab panes, arrows move, Enter
-//! selects. Ingest letters: n new project, r rescan, p pull, o Prepare, c Clean. Both
+//! popup), q quits only on the dashboard, Left / Right (or Tab / Shift+Tab) panes, Up /
+//! Down the item, Enter selects, F1 help for the current screen. Dashboard letters: i
+//! Ingest, g Logging, l Library, h server dashboard, s Settings. Ingest letters: n new
+//! project (with its requirements), r rescan, p pull, o Prepare, c Clean, l log. Both
 //! screens: y sync pending mags, d show / hide technical details (paths, UUIDs, devices).
-//! While a step runs (pull, sync, Prepare, Clean) only Ctrl-C (cancel) and d work.
+//! While a step runs (pull, sync, Prepare, Clean) only x / Ctrl-C (abort) and d work.
 
 use super::data::{DriveRow, Preview, ServerState, Snapshot};
+use crate::cardinfo::{Check, Gop, Requirements, Res, FPS_LIST};
 use crate::client_ingest::{ClientArgs, Via};
 use crate::fieldset::{self, Disk, FieldSet, SetStatus};
 use crate::ingest;
@@ -56,6 +59,8 @@ impl SudoOp {
 #[derive(Debug, Clone, Default)]
 pub struct Job {
     pub title: String,
+    /// A pull: drawn in the Ingest bar (inputs stay visible, locked), not as a popup.
+    pub inline: bool,
     pub stage: String,
     pub done: u64,
     pub total: u64,
@@ -75,21 +80,24 @@ pub enum Stub {
     Logging,
     Library,
     ServerDashboard,
+    Settings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
     Detected,
-    Files,
+    Card,
     Project,
     Details,
     Targets,
 }
 
-const PANES: [Pane; 5] = [Pane::Detected, Pane::Files, Pane::Project, Pane::Details, Pane::Targets];
+const PANES: [Pane; 5] = [Pane::Detected, Pane::Card, Pane::Project, Pane::Details, Pane::Targets];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
+    /// The project dropdown in 3 Project (not one of the Details rows).
+    Project,
     Camera,
     Format,
     Gamma,
@@ -140,12 +148,20 @@ pub enum Popup {
     Message(Vec<String>),
     /// Sudo password for a Prepare / Clean step (shown as dots).
     Password { op: SudoOp, text: String },
+    /// F1: keys and rules of the screen it was opened on.
+    Help(Screen),
+    /// l: the whole ingest log.
+    Log,
+    /// Requirements of a new project (fixed lists): row 0 frame rate, 1 resolution, 2 GOP.
+    Requirements { name: String, row: usize, req: Requirements },
+    /// The card's clips name more than one camera: pull only after a deliberate yes.
+    Mixed { args: Box<ClientArgs>, models: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectSel {
     Existing { id: String, name: String },
-    New { name: String },
+    New { name: String, req: Requirements },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,7 +218,6 @@ pub struct App {
     pub source: Option<PathBuf>,
     pub preview: Option<Result<Preview, String>>,
     pub probing: bool,
-    pub files_scroll: usize,
     pub project_sel: usize,
     pub project: Option<ProjectSel>,
     pub details: DetailsState,
@@ -220,9 +235,12 @@ pub struct App {
     pub show_tech: bool,
     /// Prepare / Clean need the sudo password (not when running as root).
     pub needs_sudo: bool,
+    /// Fixed wall clock for tests (None: the system clock).
+    pub clock: Option<i64>,
 }
 
-pub const MENU: [(char, &str); 4] = [('i', "Ingest"), ('g', "Logging"), ('l', "Library"), ('s', "Server dashboard")];
+pub const MENU: [(char, &str); 5] =
+    [('i', "Ingest"), ('g', "Logging"), ('l', "Library"), ('h', "Server dashboard"), ('s', "Settings")];
 
 impl App {
     pub fn new(snap: Snapshot, scan_roots: Vec<PathBuf>) -> App {
@@ -239,7 +257,6 @@ impl App {
             source: None,
             preview: None,
             probing: false,
-            files_scroll: 0,
             project_sel: 0,
             project: None,
             details: DetailsState::default(),
@@ -253,13 +270,26 @@ impl App {
             job: None,
             show_tech: false,
             needs_sudo: true,
+            clock: None,
         }
+    }
+
+    /// Wall clock for the System time block.
+    pub fn now(&self) -> i64 {
+        self.clock.unwrap_or_else(crate::time::now_secs)
     }
 
     // ---- running steps -----------------------------------------------------------------
 
     pub fn start_job(&mut self, title: &str) {
         self.job = Some(Job { title: title.to_string(), stage: "starting".into(), ..Default::default() });
+    }
+
+    /// A pull: progress in the Ingest bar, the details pane locked.
+    pub fn start_pull(&mut self, title: &str) {
+        self.job = Some(Job { title: title.to_string(), stage: "starting".into(), inline: true, ..Default::default() });
+        self.log(format!("pull started    {title}"));
+        self.log("locked          details and project cannot change until the copy ends".into());
     }
 
     pub fn job_msg(&mut self, m: crate::out::Msg) {
@@ -326,7 +356,6 @@ impl App {
             return; // an older probe
         }
         self.probing = false;
-        self.files_scroll = 0;
         match &r {
             Ok(p) => {
                 self.details.camera = None;
@@ -354,7 +383,12 @@ impl App {
                         }
                     }
                 }
-                self.log(format!("probe done      {} files · {}", p.files.len(), human(p.total)));
+                let st = &self.snap.display;
+                let range = p.summary.shoot_range(st).map(|r| format!(" · {r}")).unwrap_or_default();
+                self.log(format!("probe done      {} clips · {}{range}", p.summary.clips, human(p.total)));
+                if !p.mixed.is_empty() {
+                    self.log(format!("mixed cameras   {} (one mag is one camera)", p.mixed.join(", ")));
+                }
             }
             Err(e) => self.log(format!("probe failed    {e}")),
         }
@@ -392,8 +426,8 @@ impl App {
 
     pub fn projects(&self) -> Vec<ProjectSel> {
         let mut v: Vec<ProjectSel> = Vec::new();
-        if let Some(ProjectSel::New { name }) = &self.project {
-            v.push(ProjectSel::New { name: name.clone() });
+        if let Some(p @ ProjectSel::New { .. }) = &self.project {
+            v.push(p.clone());
         }
         v.extend(
             self.snap
@@ -402,6 +436,24 @@ impl App {
                 .map(|(id, name)| ProjectSel::Existing { id: id.clone(), name: name.clone() }),
         );
         v
+    }
+
+    /// Requirements of the chosen project (empty: none or no project).
+    pub fn requirements(&self) -> Requirements {
+        match &self.project {
+            Some(ProjectSel::New { req, .. }) => *req,
+            Some(ProjectSel::Existing { id, .. }) => self.snap.requirements.get(id).copied().unwrap_or_default(),
+            None => Requirements::default(),
+        }
+    }
+
+    /// The card against the project's requirements (None: no card summary or none set).
+    pub fn req_check(&self) -> Option<Check> {
+        let req = self.requirements();
+        match &self.preview {
+            Some(Ok(p)) if !req.is_empty() => Some(req.check(&p.summary)),
+            _ => None,
+        }
     }
 
     /// Route the target checkboxes select (same options as `ingest --via / --mirror-set`).
@@ -459,9 +511,9 @@ impl App {
             return Err(missing);
         }
         let (via, mirror_set) = self.route().map_err(|e| vec![e])?;
-        let (project, project_id) = match self.project.clone().expect("checked") {
-            ProjectSel::Existing { id, .. } => (None, Some(id)),
-            ProjectSel::New { name } => (Some(name), None),
+        let (project, project_id, requirements) = match self.project.clone().expect("checked") {
+            ProjectSel::Existing { id, .. } => (None, Some(id), None),
+            ProjectSel::New { name, req } => (Some(name), None, (!req.is_empty()).then_some(req)),
         };
         let d = &self.details;
         Ok(ClientArgs {
@@ -477,6 +529,8 @@ impl App {
                 notes: (!d.notes.is_empty()).then(|| d.notes.clone()),
                 model: d.model.clone(),
                 yes: true,
+                mixed_ok: false,
+                requirements,
             },
             via,
             mirror_set,
@@ -491,14 +545,18 @@ impl App {
     pub fn on_key(&mut self, k: KeyEvent) -> Option<Action> {
         let ctrl_c = k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c');
         if let Some(j) = &mut self.job {
-            // A step is running: Ctrl-C stops it, d toggles details, nothing else.
-            if ctrl_c && !j.cancelling {
+            // A step is running: x / Ctrl-C abort it, d toggles details, nothing else.
+            if (ctrl_c || k.code == KeyCode::Char('x')) && !j.cancelling {
                 j.cancelling = true;
                 return Some(Action::Cancel);
             }
             if k.code == KeyCode::Char('d') {
                 self.show_tech = !self.show_tech;
             }
+            return None;
+        }
+        if k.code == KeyCode::F(1) && !matches!(self.popup, Some(Popup::Password { .. }) | Some(Popup::Input { .. })) {
+            self.popup = Some(Popup::Help(self.screen));
             return None;
         }
         if let Some(Popup::Password { .. }) = &self.popup {
@@ -523,7 +581,7 @@ impl App {
         match self.screen {
             Screen::Dashboard => self.dashboard_key(k),
             Screen::Stub(_) => {
-                if k.code == KeyCode::Esc {
+                if k.code == KeyCode::Esc || k.code == KeyCode::Char('q') {
                     self.screen = Screen::Dashboard;
                 }
                 None
@@ -604,8 +662,12 @@ impl App {
                 self.screen = Screen::Stub(Stub::Library);
                 None
             }
-            's' => {
+            'h' => {
                 self.screen = Screen::Stub(Stub::ServerDashboard);
+                None
+            }
+            's' => {
+                self.screen = Screen::Stub(Stub::Settings);
                 None
             }
             _ => None,
@@ -639,12 +701,16 @@ impl App {
                 self.screen = Screen::Dashboard;
                 None
             }
-            KeyCode::Tab => {
+            KeyCode::Tab | KeyCode::Right => {
                 self.pane = PANES[(PANES.iter().position(|p| *p == self.pane).unwrap() + 1) % PANES.len()];
                 None
             }
-            KeyCode::BackTab => {
+            KeyCode::BackTab | KeyCode::Left => {
                 self.pane = PANES[(PANES.iter().position(|p| *p == self.pane).unwrap() + PANES.len() - 1) % PANES.len()];
+                None
+            }
+            KeyCode::Char('l') => {
+                self.popup = Some(Popup::Log);
                 None
             }
             KeyCode::Up => {
@@ -667,7 +733,18 @@ impl App {
                 None
             }
             KeyCode::Char('p') => match self.pull_args() {
-                Ok(a) => Some(Action::Pull(Box::new(a))),
+                Ok(a) => {
+                    let mixed = match &self.preview {
+                        Some(Ok(p)) => p.mixed.clone(),
+                        _ => Vec::new(),
+                    };
+                    if mixed.is_empty() {
+                        Some(Action::Pull(Box::new(a)))
+                    } else {
+                        self.popup = Some(Popup::Mixed { args: Box::new(a), models: mixed });
+                        None
+                    }
+                }
                 Err(missing) => {
                     self.popup = Some(Popup::Message(vec![
                         "Pull needs:".to_string(),
@@ -700,13 +777,7 @@ impl App {
         };
         match self.pane {
             Pane::Detected => step(&mut self.card_sel, self.snap.cards.len() + 1),
-            Pane::Files => {
-                let n = match &self.preview {
-                    Some(Ok(p)) => p.files.len(),
-                    _ => 0,
-                };
-                step(&mut self.files_scroll, n)
-            }
+            Pane::Card => {}
             Pane::Project => {
                 let n = self.projects().len();
                 step(&mut self.project_sel, n)
@@ -733,11 +804,23 @@ impl App {
                 }
                 self.choose_source(c.volume.mount)
             }
-            Pane::Files => None,
+            Pane::Card => None,
             Pane::Project => {
-                if let Some(p) = self.projects().get(self.project_sel).cloned() {
-                    self.project = Some(p);
-                }
+                // The project dropdown: open projects, then "new project…".
+                let mut items: Vec<String> = self
+                    .projects()
+                    .iter()
+                    .map(|p| match p {
+                        ProjectSel::Existing { id, name } => {
+                            let r = self.snap.requirements.get(id).copied().unwrap_or_default();
+                            if r.is_empty() { name.clone() } else { format!("{name}  · requires {}", r.display()) }
+                        }
+                        ProjectSel::New { name, req } => format!("{name}  (new · requires {})", req.display()),
+                    })
+                    .collect();
+                items.push("+ new project…".into());
+                let sel = self.project_sel.min(items.len() - 1);
+                self.popup = Some(Popup::Picker { field: Field::Project, items, sel });
                 None
             }
             Pane::Details => {
@@ -747,8 +830,10 @@ impl App {
                     Field::Format => self.camera().map(|c| c.file_formats.clone()).unwrap_or_default(),
                     Field::Gamma => self.camera().map(|c| c.gamma.clone()).unwrap_or_default(),
                     Field::Gamut => self.camera().map(|c| c.gamut.clone()).unwrap_or_default(),
+                    Field::Project => Vec::new(),
                     Field::ShootDate => {
-                        self.popup = Some(Popup::Input { kind: InputKind::ShootDate, text: self.details.shoot_date.clone() });
+                        let text = if self.details.shoot_date.is_empty() { String::new() } else { self.snap.display.iso_date(&self.details.shoot_date) };
+                        self.popup = Some(Popup::Input { kind: InputKind::ShootDate, text });
                         return None;
                     }
                     Field::Notes => {
@@ -907,8 +992,53 @@ impl App {
     fn popup_key(&mut self, k: KeyEvent) -> Option<Action> {
         let popup = self.popup.take().expect("popup");
         match popup {
-            Popup::Message(_) => None, // any key closes
+            Popup::Message(_) | Popup::Help(_) | Popup::Log => None, // any key closes
             Popup::Password { .. } => None,   // handled in password_key
+            Popup::Mixed { args, models } => match k.code {
+                KeyCode::Enter => {
+                    let mut a = *args;
+                    a.base.mixed_ok = true;
+                    self.log(format!("mixed cameras   accepted by the operator ({})", models.join(", ")));
+                    Some(Action::Pull(Box::new(a)))
+                }
+                KeyCode::Esc => {
+                    self.log("pull cancelled  mixed cameras; nothing copied".into());
+                    None
+                }
+                _ => {
+                    self.popup = Some(Popup::Mixed { args, models });
+                    None
+                }
+            },
+            Popup::Requirements { name, mut row, mut req } => {
+                match k.code {
+                    KeyCode::Esc => self.log("new project cancelled".into()),
+                    KeyCode::Up => {
+                        row = row.saturating_sub(1);
+                        self.popup = Some(Popup::Requirements { name, row, req });
+                    }
+                    KeyCode::Down => {
+                        row = (row + 1).min(2);
+                        self.popup = Some(Popup::Requirements { name, row, req });
+                    }
+                    KeyCode::Left | KeyCode::Right => {
+                        let fwd = k.code == KeyCode::Right;
+                        match row {
+                            0 => req.fps = cycle(&FPS_LIST, req.fps, fwd),
+                            1 => req.res = cycle(&Res::ALL, req.res, fwd),
+                            _ => req.gop = cycle(&Gop::ALL, req.gop, fwd),
+                        }
+                        self.popup = Some(Popup::Requirements { name, row, req });
+                    }
+                    KeyCode::Enter => {
+                        self.log(format!("new project     {name} · requires {}", req.display()));
+                        self.project = Some(ProjectSel::New { name, req });
+                        self.project_sel = 0;
+                    }
+                    _ => self.popup = Some(Popup::Requirements { name, row, req }),
+                }
+                None
+            }
             Popup::Input { kind, mut text } => {
                 match k.code {
                     KeyCode::Esc => {}
@@ -935,6 +1065,16 @@ impl App {
                     KeyCode::Down => {
                         sel = (sel + 1).min(items.len().saturating_sub(1));
                         self.popup = Some(Popup::Picker { field, items, sel });
+                    }
+                    KeyCode::Enter if field == Field::Project => {
+                        let list = self.projects();
+                        match list.get(sel).cloned() {
+                            Some(p) => {
+                                self.project = Some(p);
+                                self.project_sel = sel;
+                            }
+                            None => self.popup = Some(Popup::Input { kind: InputKind::NewProject, text: String::new() }),
+                        }
                     }
                     KeyCode::Enter => {
                         let v = items[sel].clone();
@@ -1047,18 +1187,22 @@ impl App {
                 }
                 // The same rule as `--project <name>`: an open project with this name is reused.
                 let existing: Vec<&(String, String)> = self.snap.projects.iter().filter(|(_, n)| *n == text).collect();
-                self.project = Some(match existing.as_slice() {
-                    [(id, name)] => ProjectSel::Existing { id: id.clone(), name: name.clone() },
-                    _ => ProjectSel::New { name: text },
-                });
-                self.project_sel = 0;
+                match existing.as_slice() {
+                    [(id, name)] => {
+                        self.project = Some(ProjectSel::Existing { id: id.clone(), name: name.clone() });
+                        self.project_sel = 0;
+                    }
+                    // A new project: its fixed requirements next (PLAN.md "Project requirements").
+                    _ => self.popup = Some(Popup::Requirements { name: text, row: 0, req: Requirements::default() }),
+                }
             }
             InputKind::ShootDate => {
-                if crate::time::parse_date(&text).is_none() {
-                    self.popup = Some(Popup::Message(vec![format!("{text:?} is not a date (YYYY-MM-DD)")]));
+                let Some(iso) = self.snap.display.read_date(&text) else {
+                    let example = self.snap.display.date(2026, 11, 27);
+                    self.popup = Some(Popup::Message(vec![format!("{text:?} is not a date (e.g. {example})")]));
                     return None;
-                }
-                self.details.shoot_date = text;
+                };
+                self.details.shoot_date = iso;
                 self.details.shoot_src = "given".into();
                 self.details.shoot_edited = true;
             }
@@ -1110,6 +1254,19 @@ impl App {
             }
             None => self.popup = Some(Popup::Message(vec![format!("Master of {label} prepared; mount it to add the slave.")])),
         }
+    }
+}
+
+/// Next / previous value of a fixed list, with "none" before the first.
+fn cycle<T: Copy + PartialEq>(list: &[T], cur: Option<T>, fwd: bool) -> Option<T> {
+    let pos = cur.and_then(|c| list.iter().position(|x| *x == c));
+    let n = list.len() + 1; // slot 0 = none
+    let i = pos.map(|p| p + 1).unwrap_or(0);
+    let j = if fwd { (i + 1) % n } else { (i + n - 1) % n };
+    if j == 0 {
+        None
+    } else {
+        Some(list[j - 1])
     }
 }
 

@@ -1,17 +1,20 @@
 //! Reconnect-and-sync (PLAN.md "Client ingest and field backups"): send every pending mag
 //! (local staging and mounted field sets) to the server.
 //!
-//! For each mag: re-verify the local copy against the SHA-256 in its `magcard.txt`, upload
-//! it, ask the server to commit, wait for `committed`. Only then: a field-set mag is marked
-//! synced on both drives; a local-staging mag is removed (autoclean). Anything that fails
-//! stays pending.
+//! For each mag: check its camera values against the server's profiles (nothing is
+//! uploaded when the server would refuse them), re-verify the local copy against the
+//! SHA-256 in its `magcard.txt`, upload it, ask the server to commit, wait for
+//! `committed`. Only then: a field-set mag is marked synced on both drives; a local-staging
+//! mag is marked on the server and removed once two backups exist (server + field set,
+//! PLAN.md "Client staging cache"). Anything that fails stays pending.
 
 use crate::catalog;
-use crate::client::Transport;
+use crate::client::{self, Transport};
+use crate::staging;
 use crate::config::ClientConfig;
 use crate::error::{Context, Error, Result};
 use crate::fieldset::{self, SetStatus};
-use crate::ingest::{self, is_mag_folder};
+use crate::ingest;
 use crate::interrupt;
 use crate::log::Log;
 use crate::magcard::{self, MagCard};
@@ -55,6 +58,16 @@ pub struct Report {
     pub waiting: Vec<String>,
 }
 
+/// The mag's camera values against the server's profiles, before any upload.
+fn precheck(cams: Option<&[client::ServerCamera]>, mag_dir: &Path, folder: &str) -> Result<()> {
+    let Some(cams) = cams else { return Ok(()) };
+    let text = std::fs::read_to_string(mag_dir.join(magcard::FILE_NAME)).ctx(format!("{folder} has no readable magcard.txt"))?;
+    let card = MagCard::parse(&text).map_err(|e| Error(format!("{folder}: magcard.txt: {e}")))?;
+    let g = |k: &str| card.get(k).unwrap_or("").to_string();
+    client::check_server_camera(cams, &g("camera_profile_id"), &g("file_format"), &g("gamma"), &g("gamut"))
+        .map_err(|why| Error(format!("not uploaded: {why}")))
+}
+
 pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -> Result<Report> {
     let log = Log::new(&cc.logs);
     let t = Transport::new(cc)
@@ -73,31 +86,30 @@ pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -
         failed: 0,
         waiting: Vec::new(),
     };
+    let mut sets = fieldset::sets(&fieldset::drives(scan_roots));
+    let cams = client::server_cameras(cc, Some(&t));
 
-    // Local staging: pending until confirmed, then removed.
-    let mut staged: Vec<String> = std::fs::read_dir(&cc.staging)
-        .map(|rd| {
-            rd.flatten()
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .filter(|n| is_mag_folder(n))
-                .collect()
-        })
-        .unwrap_or_default();
-    staged.sort();
-    for folder in staged {
+    // Local staging: pending until the server confirms.
+    for folder in staging::pending(&cc.staging) {
         if interrupt::requested() || committer_down {
             break;
         }
         let dir = cc.staging.join(&folder);
         crate::say!("sync {folder} (local staging) …");
-        match send(&t, cc, &dir, &folder) {
+        match precheck(cams.as_deref(), &dir, &folder).and_then(|_| send(&t, cc, &dir, &folder)) {
             Ok(()) => {
-                std::fs::remove_dir_all(&dir).ctx("autoclean of local staging")?;
-                log.info(
-                    "sync",
-                    &format!("Mag {folder} committed on the server; removed from local staging"),
-                );
-                crate::out!("synced    {folder}  (local staging, cleaned)");
+                staging::mark_synced(&cc.staging, &folder)?;
+                // A mounted field set with the same mag: its copy is on the server too.
+                let mut on_set = None;
+                if let Some(s) = sets.iter_mut().find(|s| s.status == SetStatus::Valid && s.mags.iter().any(|m| m.folder == folder)) {
+                    if s.pending().iter().any(|m| m.folder == folder) {
+                        fieldset::mark_synced(s, &folder)?;
+                    }
+                    on_set = Some(s.label.clone());
+                }
+                staging::record_server(cc, &folder, on_set.as_deref());
+                log.info("sync", &format!("Mag {folder} committed on the server (from local staging)"));
+                crate::out!("synced    {folder}  (local staging)");
                 rep.synced += 1;
             }
             Err(e) => {
@@ -107,8 +119,22 @@ pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -
         }
     }
 
+    // Staged mags on the server: autoclean once two backups exist (server + a mounted
+    // field set that holds the mag).
+    for folder in staging::synced(&cc.staging) {
+        let b = staging::Backups {
+            server: true,
+            field_set: staging::set_holding(&sets, &folder).map(|s| s.label.clone()),
+        };
+        match staging::autoclean(cc, &folder, &b, &log)? {
+            staging::Clean::Removed => crate::out!("cleaned   {folder}  (local staging: two backups exist)"),
+            staging::Clean::Kept(why) => crate::out!("kept      {folder}  (local staging: {why})"),
+        }
+    }
+    let confirmed = staging::synced(&cc.staging);
+
     // Field sets: master is the sync source; synced is recorded on both drives.
-    for mut set in fieldset::sets(&fieldset::drives(scan_roots)) {
+    for set in sets.iter_mut() {
         if set_label.is_some_and(|l| l != set.label) {
             continue;
         }
@@ -135,9 +161,16 @@ pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -
                 break;
             }
             crate::say!("sync {folder} (field set {}) …", set.label);
-            match send(&t, cc, &master.join(&folder), &folder) {
+            let sent = if confirmed.contains(&folder) {
+                // Already confirmed from its local staging copy: no second upload.
+                Ok(())
+            } else {
+                precheck(cams.as_deref(), &master.join(&folder), &folder).and_then(|_| send(&t, cc, &master.join(&folder), &folder))
+            };
+            match sent {
                 Ok(()) => {
-                    fieldset::mark_synced(&mut set, &folder)?;
+                    fieldset::mark_synced(set, &folder)?;
+                    staging::record_server(cc, &folder, Some(&set.label));
                     log.info(
                         "sync",
                         &format!(
@@ -147,6 +180,12 @@ pub fn run(cc: &ClientConfig, scan_roots: &[PathBuf], set_label: Option<&str>) -
                     );
                     crate::out!("synced    {folder}  (field set {})", set.label);
                     rep.synced += 1;
+                    if confirmed.contains(&folder) {
+                        let b = staging::Backups { server: true, field_set: Some(set.label.clone()) };
+                        if staging::autoclean(cc, &folder, &b, &log)? == staging::Clean::Removed {
+                            crate::out!("cleaned   {folder}  (local staging: two backups exist)");
+                        }
+                    }
                 }
                 Err(e) => {
                     committer_down = e.0.contains(crate::client::COMMITTER_DOWN);

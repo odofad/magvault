@@ -5,7 +5,8 @@
 
 SCRIPT lines (blank lines and # comments ignored):
     send TEXT       type TEXT; escapes: \\r Enter, \\t Tab, \\e Esc, \\x7f Backspace,
-                    \\eOB / \\e[B arrows ("down"/"up" are shortcuts)
+                    \\eOB / \\e[B arrows ("down"/"up"/"left"/"right"/"f1" send
+                    the whole key sequence at once)
     down | up       arrow key
     wait TEXT       wait (up to 60 s) until TEXT appears on the screen
     seek TEXT       press Down until the selected row (▶) contains TEXT
@@ -154,7 +155,7 @@ def main():
             os.kill(pid, signal.SIGKILL)
         sys.exit(1)
 
-    keys = {"down": "\x1b[B", "up": "\x1b[A"}
+    keys = {"down": "\x1b[B", "up": "\x1b[A", "right": "\x1b[C", "left": "\x1b[D", "f1": "\x1bOP"}
     for step in steps:
         word, _, arg = step.strip().partition(" ")
         if word in keys:

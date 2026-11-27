@@ -103,6 +103,9 @@ pub struct MediaInfo {
     pub audio_streams: Option<i64>,
     pub audio_channels: Option<String>,
     pub creation_time: Option<i64>,
+    /// Video codec and profile (ffprobe `codec_name`, `profile`), for the GOP check.
+    pub codec: Option<String>,
+    pub profile: Option<String>,
     pub probe_error: Option<String>,
 }
 
@@ -231,7 +234,7 @@ pub fn ffprobe(path: &Path) -> MediaInfo {
             "-v",
             "error",
             "-show_entries",
-            "format=duration:format_tags=creation_time:stream=codec_type,width,height,r_frame_rate,channels",
+            "format=duration:format_tags=creation_time:stream=codec_type,codec_name,profile,width,height,r_frame_rate,channels",
             "-of",
             "flat",
         ])
@@ -270,6 +273,8 @@ pub fn parse_flat(text: &str) -> MediaInfo {
                 info.width = kv.get(&format!("{p}width")).and_then(|v| v.parse().ok());
                 info.height = kv.get(&format!("{p}height")).and_then(|v| v.parse().ok());
                 info.fps = kv.get(&format!("{p}r_frame_rate")).filter(|v| v.as_str() != "0/0").cloned();
+                info.codec = kv.get(&format!("{p}codec_name")).filter(|v| !v.is_empty()).cloned();
+                info.profile = kv.get(&format!("{p}profile")).filter(|v| !v.is_empty() && v.as_str() != "unknown").cloned();
             }
             "audio" => audio.push(kv.get(&format!("{p}channels")).cloned().unwrap_or_else(|| "?".into())),
             _ => {}
@@ -422,12 +427,13 @@ mod tests {
     #[test]
     fn flat_parse() {
         let t = "streams.stream.0.codec_type=\"video\"\nstreams.stream.0.width=320\nstreams.stream.0.height=180\n\
-streams.stream.0.r_frame_rate=\"24000/1001\"\nstreams.stream.1.codec_type=\"audio\"\nstreams.stream.1.channels=2\n\
+streams.stream.0.r_frame_rate=\"24000/1001\"\nstreams.stream.0.codec_name=\"h264\"\nstreams.stream.0.profile=\"High 4:2:2 Intra\"\nstreams.stream.1.codec_type=\"audio\"\nstreams.stream.1.channels=2\n\
 streams.stream.1.r_frame_rate=\"0/0\"\nstreams.stream.2.codec_type=\"audio\"\nstreams.stream.2.channels=1\n\
 format.duration=\"1.001000\"\nformat.tags.creation_time=\"2025-05-20T14:02:11.000000Z\"\n";
         let i = parse_flat(t);
         assert_eq!(i.width, Some(320));
         assert_eq!(i.fps.as_deref(), Some("24000/1001"));
+        assert_eq!((i.codec.as_deref(), i.profile.as_deref()), (Some("h264"), Some("High 4:2:2 Intra")));
         assert_eq!(i.audio_streams, Some(2));
         assert_eq!(i.audio_channels.as_deref(), Some("2,1"));
         assert_eq!(i.duration_ms, Some(1001));

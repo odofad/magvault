@@ -12,6 +12,9 @@
 //!   status <folder>    queued | verifying | committed | error: … | unknown, then the
 //!                      committer line (see ping)
 //!   projects           open projects as `uuid | name` lines
+//!   requirements       requirements of open projects as `uuid | fps=25 res=HD` lines
+//!   cameras            the server's camera profiles as `id | formats | gammas | gamuts`
+//!                      lines (the client checks a mag against them before uploading)
 //!   ping               `magvault-gate ok <client>`, then `serve alive` or `serve down: …`
 //!                      (the heartbeat `magvault serve` writes while it accepts commits)
 //!   log                client issue / debug lines on stdin (`LEVEL message`), queued for
@@ -167,6 +170,14 @@ pub fn run(spool: &Path, results: &Path, client: &str, rrsync: &Path) -> Result<
                 "{}",
                 std::fs::read_to_string(results.join("projects.txt")).unwrap_or_default()
             );
+            Ok(())
+        }
+        ["requirements"] => {
+            print!("{}", std::fs::read_to_string(results.join("requirements.txt")).unwrap_or_default());
+            Ok(())
+        }
+        ["cameras"] => {
+            print!("{}", std::fs::read_to_string(results.join("cameras.txt")).unwrap_or_default());
             Ok(())
         }
         ["commit", folder] => {

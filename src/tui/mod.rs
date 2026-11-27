@@ -139,7 +139,7 @@ pub fn run(cc: &ClientConfig, scan_roots: Vec<PathBuf>) -> Result<()> {
                 Action::Pull(args) => {
                     let src = args.base.source.clone();
                     let label = src.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    app.start_job(&format!("Pull {label}"));
+                    app.start_pull(&format!("Pull {label}"));
                     let cc2 = cc.clone();
                     spawn_job(&tx, None, None, move || {
                         let folder = client_ingest::run(&cc2, *args)?;

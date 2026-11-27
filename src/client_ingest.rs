@@ -1,8 +1,10 @@
 //! Client ingest (PLAN.md "Client ingest and field backups", Phase 1).
 //!
 //! Routes (`--via`):
-//! - `staging` (default): card → local staging → rsync to the server → server confirms →
-//!   autoclean staging.
+//! - `staging` (default): card → local staging → rsync to the server → server confirms.
+//!   The staged copy is removed (autoclean) only once two backups exist: the server and a
+//!   field set (`--mirror-set`). With the server alone it stays (PLAN.md "Client staging
+//!   cache"); `magvault staging` lists and clears it.
 //! - `set`: the field backup set is the staging location: card → master, master → slave
 //!   (same mags on both, always), listed as pending; then sync to the server, and on
 //!   confirmation the mag is marked synced on both drives (it stays on the set until Clean).
@@ -49,7 +51,7 @@ impl Via {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClientArgs {
     pub base: Args,
     pub via: Via,
@@ -109,8 +111,30 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
     let cams = ingest::load_cameras_logged(&cc.cameras, &log);
     let probe = ingest::probe_source(&src)?;
     let d = ingest::choose_details(&a.base, &probe, &cams, &src)?;
-    let known = client::projects(cc, if online { transport.as_ref() } else { None });
-    let project = client::choose_project(&a.base, &known)?;
+    let t_online = if online { transport.as_ref() } else { None };
+    let known = client::projects(cc, t_online);
+    let reqs = client::requirements(cc, t_online);
+    let project = client::choose_project(&a.base, &known, &reqs)?;
+    let req = client::project_requirements(&project, &reqs);
+    let (summary, check) = ingest::check_requirements(&req, &probe);
+
+    // The server must accept these camera values: checked before anything is copied when
+    // the server answers (refused here, not after a full upload).
+    let server_cams = client::server_cameras(cc, t_online);
+    let mut cam_note = None;
+    if let Some(list) = &server_cams {
+        if let Err(why) = client::check_server_camera(list, &d.cam.id, &d.file_format, &d.gamma, &d.gamut) {
+            if online {
+                crate::client::queue_issue(Level::Error, &format!("ingest refused before copying: {why}"));
+                crate::bail!("{why}. Nothing copied.");
+            }
+            cam_note = Some(format!(
+                "WARNING     the server's profile list (cached) does not accept this mag: {why}. It will stay pending until the profiles agree."
+            ));
+        }
+    } else if online {
+        cam_note = Some("note        the server does not publish its camera profiles yet; it checks them after the upload".into());
+    }
 
     let route = match (a.via, a.mirror_set) {
         (Via::Staging, false) => format!("card → local staging {} → server", cc.staging.display()),
@@ -140,10 +164,22 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
     if set.is_none() {
         extra.push("backup      none: keep the card until the server confirms".into());
     }
+    if a.via == Via::Staging {
+        extra.push(if set.is_some() {
+            "staging     removed once the server confirms (field set + server = two backups)".into()
+        } else {
+            "staging     kept after the server confirms (one backup; autoclean needs two)".into()
+        });
+    }
+    extra.extend(ingest::requirement_lines(&req, &summary, &check));
+    extra.extend(cam_note);
     ingest::print_summary(&src, &probe, &a.base, &d, &project, &extra);
+    ingest::confirm_mixed(&a.base, &d)?;
     if !a.base.yes && !util::confirm("Pull (verified copy) with these values?")? {
         crate::bail!("cancelled; nothing was written");
     }
+    let extras = ingest::CardExtras::new(&d, &project, &check);
+    let fingerprint = crate::staging::probe_fingerprint(&probe.files);
 
     interrupt::install();
     client::remember_local_project(cc, &project)?;
@@ -157,7 +193,7 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
             let rels: Vec<&str> = probe.files.iter().map(|f| f.rel.as_str()).collect();
             ingest::rsync_copy(&probe.root, &rels, dir, list)?;
             ingest::verify_tree(dir, &ingest::expected_of(&entries), "verifying")?;
-            ingest::write_cards(dir, &rec, &d.cam.name, d.model_hint.as_deref(), &entries, &c4s)
+            ingest::write_cards(dir, &rec, &d.cam.name, &extras, &entries, &c4s)
         };
 
         // Local copies first.
@@ -199,6 +235,17 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
             }
             Via::Direct => {}
         }
+        if local.is_some() {
+            crate::staging::record_dump(cc, &fingerprint, &folder, set.as_ref().map(|s| s.label.as_str()));
+        }
+        if !check.ok() {
+            let msg = format!("project {}: {} Mag {folder}: {}", project.name(), crate::cardinfo::WARNING, check.line());
+            log.warn("project", &msg);
+            crate::client::queue_issue(Level::Warn, &msg);
+        }
+        if !d.mixed.is_empty() {
+            log.warn("ingest", &format!("Mag {folder}: card held clips of several cameras ({}); ingested as one mag", d.mixed.join(", ")));
+        }
 
         // Then the server.
         let mut synced = false;
@@ -206,7 +253,7 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
             let t = transport.as_ref().expect("online implies a transport");
             let sent = match &local {
                 Some(dir) => sync::send(t, cc, dir, &folder),
-                None => send_direct(t, cc, &probe, &folder, &rec, &d.cam.name, d.model_hint.as_deref(), &entries, &c4s),
+                None => send_direct(t, cc, &probe, &folder, &rec, &d.cam.name, &extras, &entries, &c4s),
             };
             match sent {
                 Ok(()) => {
@@ -215,12 +262,20 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
                         "sync",
                         &format!("Mag {folder} committed on the server ({})", t.describe()),
                     );
-                    if a.via == Via::Staging {
-                        std::fs::remove_dir_all(cc.staging.join(&folder))
-                            .ctx("autoclean of local staging")?;
-                    }
                     if let Some(s) = set.as_mut() {
                         fieldset::mark_synced(s, &folder)?;
+                    }
+                    if local.is_none() {
+                        crate::staging::record_dump(cc, &fingerprint, &folder, None);
+                    }
+                    crate::staging::record_server(cc, &folder, set.as_ref().map(|s| s.label.as_str()));
+                    if a.via == Via::Staging {
+                        crate::staging::mark_synced(&cc.staging, &folder)?;
+                        let b = crate::staging::Backups { server: true, field_set: set.as_ref().map(|s| s.label.clone()) };
+                        match crate::staging::autoclean(cc, &folder, &b, &log)? {
+                            crate::staging::Clean::Removed => crate::say!("local staging copy removed: two backups exist (server + field set)"),
+                            crate::staging::Clean::Kept(why) => crate::say!("local staging copy kept: {why}"),
+                        }
                     }
                 }
                 Err(e) if a.via == Via::Direct => return Err(e),
@@ -278,6 +333,12 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
                     "pending (run `magvault sync`)"
                 }
             );
+            if a.via == Via::Staging {
+                crate::out!(
+                    "  staging {}",
+                    if cc.staging.join(&folder).is_dir() { "kept" } else { "removed (two backups)" }
+                );
+            }
             Ok(folder)
         }
         Err(e) => {
@@ -414,14 +475,14 @@ fn send_direct(
     folder: &str,
     rec: &crate::catalog::MagRecord,
     cam_name: &str,
-    model_hint: Option<&str>,
+    extras: &ingest::CardExtras,
     entries: &[FileEntry],
     c4s: &[String],
 ) -> Result<()> {
     let st = Staged::create(&cc.staging.join(".incoming"), folder)?;
     let r = (|| -> Result<()> {
         std::fs::create_dir(&st.dir).ctx(format!("cannot create {}", st.dir.display()))?;
-        ingest::write_cards(&st.dir, rec, cam_name, model_hint, entries, c4s)?;
+        ingest::write_cards(&st.dir, rec, cam_name, extras, entries, c4s)?;
         let rels: Vec<&str> = probe.files.iter().map(|f| f.rel.as_str()).collect();
         t.upload(&probe.root, &rels, folder, &st.list)?;
         let meta = internal_files(&st.dir)?;
