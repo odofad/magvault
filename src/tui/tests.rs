@@ -121,7 +121,6 @@ fn preview(path: &Path) -> Preview {
             ("PRIVATE/M4ROOT/CLIP/C0001.MP4".into(), "clip", 50_000_000),
             ("PRIVATE/M4ROOT/CLIP/C0001M01.XML".into(), "sidecar", 2_000),
         ],
-        skipped: vec![".DS_Store".into()],
         total: 50_002_000,
         camera: Ok("sony-a7siii".into()),
         shoot: Some(("2011-04-30".into(), "earliest file modification time".into())),

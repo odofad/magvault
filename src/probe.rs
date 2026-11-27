@@ -10,14 +10,9 @@ use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Junk that is never copied (NOTES.md: "only skip junk like AppleDouble"; ingest mockup
-/// marks `.DS_Store` as skipped). Names are matched exactly; `._*` is AppleDouble.
-const JUNK_NAMES: &[&str] = &[".DS_Store", ".Spotlight-V100", ".Trashes", ".fseventsd", ".TemporaryItems"];
-
-/// Camera scratch files that are not media, matched case-insensitively by name. Sony
-/// XDCAM bodies (FX6) keep a preallocated 256 MiB `XDROOT/General/Sony/SALVAGE.TMP`
-/// (docs/camera-identification-findings.md).
-const JUNK_CAMERA_FILES: &[&str] = &["SALVAGE.TMP"];
+// No junk filter (PLAN.md "Mag rules"): every file on the card is copied, including
+// SALVAGE.TMP, AppleDouble `._*` and `.DS_Store`. Only Magvault's own additions
+// (magcard.txt, ascmhl/, .magvault/) are told apart, and only inside a mag folder.
 
 /// Extensions treated as media (one media file = one clip in v1). Everything else is a
 /// sidecar (same folder, same stem as a media file) or "other". `mpg`: Sony MPEG-2 PS
@@ -59,7 +54,7 @@ pub fn holds_media(dir: &Path) -> bool {
             *budget -= 1;
             let Ok(ft) = e.file_type() else { continue };
             let name = e.file_name().to_string_lossy().into_owned();
-            if ft.is_file() && is_media_name(&name) && !is_junk(&name) {
+            if ft.is_file() && is_media_name(&name) && !name.starts_with("._") {
                 return true;
             }
             if ft.is_dir() && depth < 6 && go(&e.path(), depth + 1, budget) {
@@ -122,12 +117,7 @@ pub struct Probe {
     pub root: PathBuf,
     pub files: Vec<ProbedFile>,
     pub clips: Vec<Clip>,
-    pub skipped: Vec<String>,
     pub total_bytes: u64,
-}
-
-fn is_junk(name: &str) -> bool {
-    JUNK_NAMES.contains(&name) || name.starts_with("._") || JUNK_CAMERA_FILES.iter().any(|j| name.eq_ignore_ascii_case(j))
 }
 
 fn ext_lower(name: &str) -> String {
@@ -140,11 +130,10 @@ fn stem_lower(name: &str) -> String {
 
 /// Walk the source tree. Refuses symlinks, devices, FIFOs, sockets, non-UTF-8 names and
 /// names with `|` or control characters (they cannot be written to the text cards).
-pub fn walk(root: &Path) -> Result<(Vec<ProbedFile>, Vec<String>)> {
+pub fn walk(root: &Path) -> Result<Vec<ProbedFile>> {
     let mut files = Vec::new();
-    let mut skipped = Vec::new();
     let mut problems = Vec::new();
-    walk_dir(root, root, &mut files, &mut skipped, &mut problems)?;
+    walk_dir(root, root, &mut files, &mut problems)?;
     if !problems.is_empty() {
         let shown: Vec<String> = problems.iter().take(20).cloned().collect();
         crate::bail!(
@@ -155,14 +144,13 @@ pub fn walk(root: &Path) -> Result<(Vec<ProbedFile>, Vec<String>)> {
         );
     }
     files.sort_by(|a, b| a.rel.cmp(&b.rel));
-    Ok((files, skipped))
+    Ok(files)
 }
 
 fn walk_dir(
     root: &Path,
     dir: &Path,
     files: &mut Vec<ProbedFile>,
-    skipped: &mut Vec<String>,
     problems: &mut Vec<String>,
 ) -> Result<()> {
     let mut entries: Vec<_> = std::fs::read_dir(dir)
@@ -178,10 +166,6 @@ fn walk_dir(
             continue;
         };
         let name = e.file_name().to_string_lossy().into_owned();
-        if is_junk(&name) {
-            skipped.push(rel);
-            continue;
-        }
         if name.contains('|') || name.chars().any(char::is_control) {
             problems.push(format!("{} (name contains '|' or a control character)", esc(&rel)));
             continue;
@@ -190,7 +174,7 @@ fn walk_dir(
         if ft.is_symlink() {
             problems.push(format!("{} (symbolic link)", esc(&rel)));
         } else if ft.is_dir() {
-            walk_dir(root, &path, files, skipped, problems)?;
+            walk_dir(root, &path, files, problems)?;
         } else if ft.is_file() {
             let md = e.metadata().ctx(format!("cannot stat {}", path.display()))?;
             let mtime = md.modified().map(time::system_time_secs).unwrap_or(0);
@@ -209,7 +193,8 @@ pub fn classify(files: &mut [ProbedFile]) -> Vec<Clip> {
     let mut by_key: HashMap<(String, String), usize> = HashMap::new();
     for (i, f) in files.iter_mut().enumerate() {
         let name = Path::new(&f.rel).file_name().unwrap().to_string_lossy().into_owned();
-        if MEDIA_EXT.contains(&ext_lower(&name).as_str()) {
+        // AppleDouble `._X.mov` is copied (no junk filter) but is not a clip.
+        if MEDIA_EXT.contains(&ext_lower(&name).as_str()) && !name.starts_with("._") {
             f.role = Role::Media;
             f.clip = Some(clips.len());
             let parent = Path::new(&f.rel).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
@@ -299,7 +284,7 @@ pub fn parse_flat(text: &str) -> MediaInfo {
 
 /// Probe a mag folder (Magvault's own `magcard.txt`, `ascmhl/`, `.magvault/` left out).
 pub fn probe_mag(root: &Path) -> Result<Probe> {
-    let (files, skipped) = walk(root)?;
+    let files = walk(root)?;
     let mut files: Vec<ProbedFile> = files
         .into_iter()
         .filter(|f| {
@@ -319,13 +304,12 @@ pub fn probe_mag(root: &Path) -> Result<Probe> {
         root: root.to_path_buf(),
         files,
         clips,
-        skipped,
         total_bytes,
     })
 }
 
 pub fn probe(root: &Path, run_ffprobe: bool) -> Result<Probe> {
-    let (mut files, skipped) = walk(root)?;
+    let mut files = walk(root)?;
     let mut clips = classify(&mut files);
     if run_ffprobe {
         for c in clips.iter_mut() {
@@ -333,7 +317,7 @@ pub fn probe(root: &Path, run_ffprobe: bool) -> Result<Probe> {
         }
     }
     let total_bytes = files.iter().map(|f| f.size).sum();
-    Ok(Probe { root: root.to_path_buf(), files, clips, skipped, total_bytes })
+    Ok(Probe { root: root.to_path_buf(), files, clips, total_bytes })
 }
 
 /// Guess the camera profile: every `card_layout` folder present at the card root, and/or

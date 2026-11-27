@@ -478,7 +478,7 @@ mod tests {
     }
     /// The seven reference cards of docs/camera-identification-findings.md in miniature:
     /// same folders, file names and metadata strings (tiny files), with the shipped
-    /// profiles. Checks layout label, camera guess, model hint, sidecar pairing and junk.
+    /// profiles. Checks layout label, camera guess, model hint, sidecar pairing, and that nothing is dropped.
     #[test]
     fn reference_cards() {
         let base = std::env::temp_dir().join(format!("mv-refcards-{}", std::process::id()));
@@ -531,24 +531,10 @@ mod tests {
         put("CX350/LASTCLIP.TXT", b"001GW5GN");
         fs::create_dir_all(base.join("CX350/DCIM")).unwrap();
 
-        let cams: Vec<CameraProfile> = [
-            include_str!("../share/cameras/generic-avchd.cam"),
-            include_str!("../share/cameras/panasonic-ag-cx350.cam"),
-            include_str!("../share/cameras/sony-a7siii.cam"),
-            include_str!("../share/cameras/sony-fdr-ax33.cam"),
-            include_str!("../share/cameras/sony-fdr-ax53.cam"),
-            include_str!("../share/cameras/sony-ilce-7m3.cam"),
-            include_str!("../share/cameras/sony-ilme-fx6.cam"),
-            include_str!("../share/cameras/sony-pxw-fs5.cam"),
-            include_str!("../share/cameras/sony-pxw-fs7.cam"),
-            include_str!("../share/cameras/sony-vg20.cam"),
-        ]
-        .iter()
-        .map(|t| {
-            let id = t.lines().find_map(|l| l.strip_prefix("id: ")).unwrap();
-            parse_camera(Path::new(&format!("{id}.cam")), t).unwrap()
-        })
-        .collect();
+        // Every shipped profile (share/cameras).
+        let share = Path::new(env!("CARGO_MANIFEST_DIR")).join("share/cameras");
+        let cams = crate::profiles::load_cameras(&share).profiles;
+        assert!(cams.len() >= 10, "{}", cams.len());
         let check = |card: &str, layout: &str, camera: Option<&str>, hint: Option<&str>| {
             let root = base.join(card);
             let p = probe::probe(&root, false).unwrap();
@@ -562,18 +548,18 @@ mod tests {
         check(
             "AX3",
             "Sony XAVC (PRIVATE/M4ROOT) + AVCHD (PRIVATE/AVCHD)",
-            Some("generic-avchd"),
+            Some("sony-fdr-ax53"),
             Some("FDR-AX53 (clip sidecar XML)"),
         );
         check(
             "FS5",
             "Sony XDCAM (PRIVATE/XDROOT) + AVCHD (PRIVATE/AVCHD)",
-            Some("generic-avchd"),
+            Some("sony-pxw-fs5"),
             Some("PXW-FS5 (clip sidecar XML)"),
         );
-        let fx6 = check("FX6", "Sony XDCAM (XDROOT)", None, Some("ILME-FX6V (clip sidecar XML)"));
-        assert!(fx6.skipped.iter().any(|s| s.ends_with("SALVAGE.TMP")), "SALVAGE.TMP is junk");
-        assert!(!fx6.files.iter().any(|f| f.rel.ends_with("SALVAGE.TMP")));
+        let fx6 = check("FX6", "Sony XDCAM (XDROOT)", Some("sony-ilme-fx6"), Some("ILME-FX6V (clip sidecar XML)"));
+        // No junk filter: SALVAGE.TMP is copied like any other file on the card.
+        assert!(fx6.files.iter().any(|f| f.rel == "XDROOT/General/Sony/SALVAGE.TMP" && f.role == probe::Role::Other));
         let side: Vec<_> = fx6.files.iter().filter(|f| f.role == probe::Role::Sidecar).map(|f| f.rel.as_str()).collect();
         assert_eq!(side, ["XDROOT/Clip/PDTV-FX6_3985M01.XML", "XDROOT/Clip/PDTV-FX6_3986M01.XML"], "M01.XML paired");
         assert!(fx6.files.iter().filter(|f| f.role == probe::Role::Sidecar).all(|f| f.clip.is_some()));
@@ -583,15 +569,25 @@ mod tests {
             Some("sony-vg20"),
             Some("NEX-VG20E (MPEG MVI_DATA)"),
         );
-        let fs7 = check("FS7", "Sony XDCAM (XDROOT)", None, Some("PXW-FS7 (clip sidecar XML)"));
+        let fs7 = check("FS7", "Sony XDCAM (XDROOT)", Some("sony-pxw-fs7"), Some("PXW-FS7 (clip sidecar XML)"));
         assert_eq!(fs7.files.iter().filter(|f| f.role == probe::Role::Sidecar).count(), 2, "M01.XML and R01.BIM paired");
-        check("A7III", "Sony XAVC (PRIVATE/M4ROOT)", None, Some("ILCE-7M3 (clip sidecar XML)"));
+        check("A7III", "Sony XAVC (PRIVATE/M4ROOT)", Some("sony-ilce-7m3"), Some("ILCE-7M3 (clip sidecar XML)"));
         check(
             "CX350",
             "Panasonic P2 (CONTENTS) + Panasonic (PRIVATE/PANA_GRP) + AVCHD (PRIVATE/AVCHD)",
-            Some("generic-avchd"),
+            Some("panasonic-ag-cx350"),
             Some("AG-CX350 (XML inside the clip)"),
         );
+        // The model string is what splits A7 III from AX53 (same XAVC S tree): with the
+        // AX53's hint on an A7 III-shaped card, the AX53 profile wins and the A7 III one is
+        // ruled out.
+        let ax = [crate::camera_meta::Hint { model: "FDR-AX53".into(), source: "clip sidecar XML" }];
+        let p = probe::probe(&base.join("A7III"), false).unwrap();
+        assert_eq!(guess_camera(&p, &cams, &ax).unwrap().id, "sony-fdr-ax53");
+        // The P2 spelling alone (no MOV XML) still names the CX350 profile.
+        let p2 = [crate::camera_meta::Hint { model: "CX350".into(), source: "P2 clip XML" }];
+        let p = probe::probe(&base.join("CX350"), false).unwrap();
+        assert_eq!(guess_camera(&p, &cams, &p2).unwrap().id, "panasonic-ag-cx350");
         // A VG20 profile without MP_ROOT never claims an AVCHD card; generic-avchd never
         // outranks a specific match; the operator's --model drives the guess like a hint.
         let op = [crate::camera_meta::Hint { model: "NEX-VG20".into(), source: "given by the operator" }];

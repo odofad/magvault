@@ -258,7 +258,7 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
                     probe.clips.len(),
                     project.name()
                 ),
-                &ingest::skipped_context(&probe),
+                &[],
             );
             if !synced && set.is_none() {
                 let msg = format!(
@@ -319,7 +319,7 @@ pub fn internal_files(dir: &Path) -> Result<Vec<String>> {
     let mut v = vec![magcard::FILE_NAME.to_string()];
     let m = dir.join(mhl::DIR);
     if m.is_dir() {
-        let (files, _) = probe::walk(&m)?;
+        let files = probe::walk(&m)?;
         v.extend(files.into_iter().map(|f| format!("{}/{}", mhl::DIR, f.rel)));
     }
     Ok(v)

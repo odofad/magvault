@@ -14,7 +14,6 @@ import xml.etree.ElementTree as ET
 
 data, card, folder = sys.argv[1:4]
 mag = os.path.join(data, "mags", folder)
-JUNK = {".DS_Store"}
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
@@ -39,8 +38,6 @@ def tree(root, skip_internal):
             continue
         for f in fns:
             rel = os.path.normpath(os.path.join(rel_dir, f))
-            if f in JUNK or f.startswith("._"):
-                continue
             if skip_internal and rel == "magcard.txt":
                 continue
             out[rel] = os.path.join(dp, f)
@@ -63,8 +60,8 @@ assert set(src) == set(dst), (set(src) ^ set(dst))
 for rel in src:
     assert open(src[rel], "rb").read() == open(dst[rel], "rb").read(), rel
     assert int(os.stat(src[rel]).st_mtime) == int(os.stat(dst[rel]).st_mtime), rel
-assert not os.path.exists(os.path.join(mag, ".DS_Store"))
-ok(f"{len(src)} files copied byte-identical with mtimes; junk not copied")
+assert os.path.exists(os.path.join(mag, ".DS_Store")) and os.path.exists(os.path.join(mag, "MISC", "._A001_C001.mov"))
+ok(f"{len(src)} files copied byte-identical with mtimes, .DS_Store and ._ files included (no junk filter)")
 
 # ---- magcard -------------------------------------------------------------------------
 text = open(os.path.join(mag, "magcard.txt"), encoding="utf-8").read()
@@ -151,6 +148,7 @@ roles = {f["relative_path"]: f["role"] for f in files}
 assert roles["PRIVATE/M4ROOT/CLIP/A001_C001.mov"] == "media"
 assert roles["PRIVATE/M4ROOT/CLIP/A001_C001.XML"] == "sidecar"
 assert roles["INFO.TXT"] == "other" and roles["DCIM/100MSDCF/DSC00001.JPG"] == "other"
+assert roles[".DS_Store"] == "other" and roles["MISC/._A001_C001.mov"] == "other", "copied, but AppleDouble is not a clip"
 clips = db.execute("select * from clips where mag_id = ? order by relative_path", (mag_uuid,)).fetchall()
 assert [c["relative_path"] for c in clips] == ["PRIVATE/M4ROOT/CLIP/A001_C001.mov", "PRIVATE/M4ROOT/CLIP/A001_C002.mov"]
 side = [f for f in files if f["role"] == "sidecar"][0]

@@ -174,13 +174,14 @@ impl CameraProfile {
     }
 }
 
+/// `*` any run, `?` one character, `#` one digit (`A###C###_*.MXF`); case-insensitive.
 pub fn glob_match(pattern: &str, name: &str) -> bool {
     let p: Vec<char> = pattern.to_lowercase().chars().collect();
     let n: Vec<char> = name.to_lowercase().chars().collect();
     let (mut pi, mut ni) = (0usize, 0usize);
     let (mut star, mut mark) = (None::<usize>, 0usize);
     while ni < n.len() {
-        if pi < p.len() && (p[pi] == '?' || p[pi] == n[ni]) {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == n[ni] || (p[pi] == '#' && n[ni].is_ascii_digit())) {
             pi += 1;
             ni += 1;
         } else if pi < p.len() && p[pi] == '*' {

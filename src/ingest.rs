@@ -1,7 +1,7 @@
 //! Ingest building blocks and the server-side (Phase 0) manual-path ingest.
 //!
 //! Server ingest (PLAN.md "Ingest flow"):
-//! 1. Probe the source: walk files and sidecars, skip junk, ffprobe media, guess camera
+//! 1. Probe the source: walk every file (no junk filter), pair sidecars, ffprobe media, guess camera
 //!    and shoot day.
 //! 2. Operator confirms camera, format, gamma, gamut, shoot day, project (flags or prompt).
 //! 3. Hash at ingest: SHA-256 (and C4 for the ASC MHL) of every file, in the first read
@@ -315,14 +315,6 @@ pub fn print_summary(
         probe.files.len() - media_count - sidecars,
         human(probe.total_bytes)
     );
-    let skipped: Vec<String> = probe.skipped.iter().map(|s| esc(s)).collect();
-    if !skipped.is_empty() {
-        crate::say!(
-            "  skipped     {} junk item(s): {}",
-            skipped.len(),
-            skipped.join(", ")
-        );
-    }
     let guessed = |given: bool| if given { "" } else { "  (guessed)" };
     crate::say!(
         "  camera      {} [{}]{}",
@@ -634,7 +626,7 @@ pub fn verify_tree(dir: &Path, expected: &[(&str, u64, &str)], label: &str) -> R
 }
 
 fn verify_tree_inner(dir: &Path, expected: &[(&str, u64, &str)], label: &str) -> Result<()> {
-    let (copied, _) = probe::walk(dir).ctx("cannot list the copied files")?;
+    let copied = probe::walk(dir).ctx("cannot list the copied files")?;
     let copied: Vec<_> = copied.into_iter().filter(|f| !internal(&f.rel)).collect();
     let want: BTreeMap<&str, (u64, &str)> =
         expected.iter().map(|(r, s, h)| (*r, (*s, *h))).collect();
@@ -961,7 +953,7 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
                 media_count,
                 project.name()
             );
-            log.write(Level::Info, "ingest", &msg, &skipped_context(&probe));
+            log.write(Level::Info, "ingest", &msg, &[]);
             if media_count > 0 {
                 log.info(
                     "encoder",
@@ -990,13 +982,6 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
     }
 }
 
-pub fn skipped_context(probe: &Probe) -> Vec<String> {
-    if probe.skipped.is_empty() {
-        Vec::new()
-    } else {
-        vec![format!("skipped junk: {}", probe.skipped.join(", "))]
-    }
-}
 
 pub fn log_failure(log: &Log, src: &Path, e: &Error) {
     let context: Vec<String> =

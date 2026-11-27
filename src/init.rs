@@ -7,20 +7,10 @@ use crate::error::{Context, Result};
 use crate::textfile::atomic_write;
 use std::path::{Path, PathBuf};
 
-/// Every camera profile in `share/cameras` (a unit test checks the list against the
-/// folder). `magvault init` copies them into an empty cameras folder.
-const STARTER_CAMERAS: &[(&str, &str)] = &[
-    ("generic-avchd.cam", include_str!("../share/cameras/generic-avchd.cam")),
-    ("panasonic-ag-cx350.cam", include_str!("../share/cameras/panasonic-ag-cx350.cam")),
-    ("sony-a7siii.cam", include_str!("../share/cameras/sony-a7siii.cam")),
-    ("sony-fdr-ax33.cam", include_str!("../share/cameras/sony-fdr-ax33.cam")),
-    ("sony-fdr-ax53.cam", include_str!("../share/cameras/sony-fdr-ax53.cam")),
-    ("sony-ilce-7m3.cam", include_str!("../share/cameras/sony-ilce-7m3.cam")),
-    ("sony-ilme-fx6.cam", include_str!("../share/cameras/sony-ilme-fx6.cam")),
-    ("sony-pxw-fs5.cam", include_str!("../share/cameras/sony-pxw-fs5.cam")),
-    ("sony-pxw-fs7.cam", include_str!("../share/cameras/sony-pxw-fs7.cam")),
-    ("sony-vg20.cam", include_str!("../share/cameras/sony-vg20.cam")),
-];
+/// Every camera profile in `share/cameras`, listed by build.rs at build time (a unit test
+/// checks the list against the folder). `magvault init` copies them into an empty
+/// cameras folder.
+const STARTER_CAMERAS: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/starter_cameras.rs"));
 const STARTER_ENCODERS: &[(&str, &str)] = &[
     ("default-320p.enc", include_str!("../share/encoders/default-320p.enc")),
     ("hevc-hq.enc", include_str!("../share/encoders/hevc-hq.enc")),

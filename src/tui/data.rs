@@ -89,7 +89,6 @@ impl Snapshot {
 #[derive(Debug, Clone)]
 pub struct Preview {
     pub files: Vec<(String, &'static str, u64)>,
-    pub skipped: Vec<String>,
     pub total: u64,
     /// Camera profile id, or why there is no guess (same rule as `ingest`).
     pub camera: Result<String, String>,
@@ -189,5 +188,5 @@ pub fn preview(path: &Path, cameras: &[CameraProfile]) -> Result<Preview, String
     let camera = discover::guess_camera(&p, cameras, &hints).map(|c| c.id.clone());
     let model_hint = crate::camera_meta::describe(&hints);
     let shoot = probe::guess_shoot_day(&p).map(|(d, src)| (d, src.to_string()));
-    Ok(Preview { files, skipped: p.skipped.clone(), total: p.total_bytes, camera, shoot, model_hint })
+    Ok(Preview { files, total: p.total_bytes, camera, shoot, model_hint })
 }

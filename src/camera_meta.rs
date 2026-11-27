@@ -146,15 +146,16 @@ pub fn normalise(m: &str) -> String {
     m.trim().to_string()
 }
 
-/// Does a hint name this profile model? Equal, or the hint continues with a letter (a
-/// region / variant suffix: NEX-VG20 → NEX-VG20E, ILME-FX6 → ILME-FX6V). A following
-/// digit is a different model (FDR-AX3 does not match FDR-AX33 or FDR-AX53).
+/// Does a hint name this profile model? Equal; the same body without its maker prefix
+/// (P2 XML `CX350` ↔ `AG-CX350`); or the hint continues with a letter (a region /
+/// variant suffix: NEX-VG20 → NEX-VG20E, ILME-FX6 → ILME-FX6V). A following digit is a
+/// different model (FDR-AX3 does not match FDR-AX33 or FDR-AX53).
 pub fn model_matches(hint: &str, model: &str) -> bool {
-    let (h, m) = (hint.to_uppercase(), model.trim().to_uppercase());
-    if m.is_empty() {
+    let (h, m) = (hint.trim().to_uppercase(), model.trim().to_uppercase());
+    if m.is_empty() || h.is_empty() {
         return false;
     }
-    if h == m {
+    if h == m || same_body(&h, &m) {
         return true;
     }
     match h.strip_prefix(&m) {
@@ -295,6 +296,8 @@ pub mod tests {
         assert!(model_matches("ILME-FX6V", "ILME-FX6"));
         assert!(model_matches("AG-CX350", "AG-CX350"));
         assert!(model_matches("cx350", "CX350"));
+        assert!(model_matches("CX350", "AG-CX350"), "P2 XML spelling");
+        assert!(!model_matches("X350", "AG-CX350"));
         assert!(!model_matches("FDR-AX53", "FDR-AX3"), "AX3 is the user's name; firmware writes AX53");
         assert!(!model_matches("FDR-AX33", "FDR-AX3"));
         assert!(!model_matches("ILCE-7M3", "ILCE-7SM3"));

@@ -125,7 +125,7 @@ pub fn check_one(cfg: &Config, rec: &MagRecord, camera_model: Option<&str>, veri
     let db_files: BTreeMap<&str, &magcard::ManifestRow> = rec.manifest.iter().map(|m| (m.rel.as_str(), m)).collect();
     match probe::walk(&dir) {
         Err(e) => rep.integrity.push(format!("cannot list folder: {e}")),
-        Ok((disk, _)) => {
+        Ok(disk) => {
             let disk: Vec<_> = disk.into_iter().filter(|f| !internal(&f.rel)).collect();
             let on_disk: BTreeMap<&str, &probe::ProbedFile> = disk.iter().map(|f| (f.rel.as_str(), f)).collect();
             for rel in db_files.keys().filter(|r| !on_disk.contains_key(*r)) {

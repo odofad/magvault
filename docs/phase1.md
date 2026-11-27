@@ -147,10 +147,12 @@ client, DEBUG lines are also sent to the server log through the client-issues pa
 
 ## Camera identification (fixes from docs/camera-identification-findings.md)
 
-- **Sidecars and junk.** Sony `<clip>M01.XML` and `<clip>R01.BIM` next to a clip are its
-  sidecars (FX6, FS7, FS5, XAVC S). `SALVAGE.TMP` (FX6 `XDROOT/General/Sony`, 256 MiB
-  preallocated) is junk: skipped and listed, never copied. `.MPG` is media (NEX-VG20
-  `MP_ROOT`). Panasonic `BACKUP.TMP` is still copied as "other" (not decided).
+- **Sidecars; no junk filter.** Sony `<clip>M01.XML` and `<clip>R01.BIM` next to a clip
+  are its sidecars (FX6, FS7, FS5, XAVC S). PLAN.md "Mag rules": every file on the card
+  is copied, including `SALVAGE.TMP`, Panasonic `BACKUP.TMP`, `.DS_Store` and AppleDouble
+  `._*` files (an AppleDouble `._X.mov` is copied as "other", not counted as a clip). The
+  only files told apart are Magvault's own (`magcard.txt`, `ascmhl/`, `.magvault/`) inside
+  a mag folder. `.MPG` is media (NEX-VG20 `MP_ROOT`).
 - **Model hint.** `src/camera_meta.rs` reads the model only from metadata next to live
   media: clip sidecar XML (`modelName`), `MEDIAPRO.XML` `systemKind` only when its folder
   holds clips (prefix; ` ver.x` dropped), P2 `CONTENTS/CLIP/<stem>.XML`, XML inside
@@ -178,14 +180,18 @@ client, DEBUG lines are also sent to the server log through the client-issues pa
   XDCAM (`PRIVATE/XDROOT`, `XDROOT`), Sony MPEG (`MP_ROOT`), Canon XF, AVCHD
   (`PRIVATE/AVCHD`). An empty `M4ROOT` no longer steals the label. AVCHD alone names no
   vendor.
-- **Profiles shipped.** `init` installs every `share/cameras/*.cam` (generic-avchd,
-  sony-a7siii, sony-fdr-ax33, sony-vg20); a unit test keeps `STARTER_CAMERAS` equal to
-  the folder.
+- **Profiles shipped.** `init` installs every `share/cameras/*.cam`: `build.rs` lists the
+  folder at build time, so a new file needs no code change (a unit test checks the list).
+  Today: generic-avchd, panasonic-ag-cx350, sony-a7siii, sony-fdr-ax33, sony-fdr-ax53,
+  sony-ilce-7m3, sony-ilme-fx6, sony-pxw-fs5, sony-pxw-fs7, sony-vg20. `#` in
+  `filename_pattern` matches one digit (`A###C###_*.MXF`). A P2 hint `CX350` matches
+  `model: AG-CX350` (same body without the maker prefix).
 - **Reference cards.** `cargo test reference_cards` rebuilds the seven reference cards in
   miniature (folders, names, metadata strings) and checks label, guess, hint, pairing and
-  junk: AX3 → generic-avchd + hint FDR-AX53; FS5 → generic-avchd + PXW-FS5; FX6 → no
-  guess + ILME-FX6V; VG20 → sony-vg20 + NEX-VG20E; FS7 → no guess + PXW-FS7; A7 III → no
-  guess + ILCE-7M3; CX350 → generic-avchd + AG-CX350.
+  that nothing is dropped, with every shipped profile: AX3 → sony-fdr-ax53 (hint
+  FDR-AX53); FS5 → sony-pxw-fs5; FX6 → sony-ilme-fx6 (ILME-FX6V); VG20 → sony-vg20
+  (NEX-VG20E); FS7 → sony-pxw-fs7; A7 III → sony-ilce-7m3; CX350 → panasonic-ag-cx350
+  (AG-CX350, or CX350 from the P2 XML).
 
 ## What the pieces do
 

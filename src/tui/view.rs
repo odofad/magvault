@@ -412,9 +412,6 @@ fn ingest(f: &mut Frame, area: Rect, app: &App) {
             }
             l.push(Line::raw(""));
             l.push(Line::raw(format!(" {} files · {}", p.files.len(), human(p.total))));
-            if !p.skipped.is_empty() {
-                l.push(Line::styled(format!(" {} junk file(s) skipped", p.skipped.len()), dim()));
-            }
         }
     }
     f.render_widget(Paragraph::new(l).block(pane("2 Files", app.pane == Pane::Files)), files);

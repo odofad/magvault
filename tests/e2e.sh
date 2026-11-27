@@ -63,10 +63,10 @@ mkclip "$CARD/PRIVATE/M4ROOT/CLIP/A001_C002.mov" 2025-05-20T15:30:00Z
 echo '<xml>sidecar</xml>' > "$CARD/PRIVATE/M4ROOT/CLIP/A001_C001.XML"
 echo 'card info' > "$CARD/INFO.TXT"
 echo 'spaces in name' > "$CARD/MISC/ note with spaces .txt"
-echo 'junk' > "$CARD/.DS_Store"
-echo 'junk' > "$CARD/MISC/._A001_C001.mov"
+echo 'mac' > "$CARD/.DS_Store"            # no junk filter: copied like everything else
+echo 'mac' > "$CARD/MISC/._A001_C001.mov"
 head -c 3000000 /dev/urandom > "$CARD/DCIM/100MSDCF/DSC00001.JPG"
-pass "card with 2 clips, 1 sidecar, 3 other files, 2 junk files"
+pass "card with 2 clips, 1 sidecar, 5 other files (incl. .DS_Store and an AppleDouble file)"
 
 echo "== refusals before anything is written"
 expect_fail "no confirmation without a terminal" "re-run with --yes" mv_ ingest "$CARD" --project ACME_Campaign_2025 </dev/null
@@ -200,15 +200,14 @@ echo "== control characters are escaped on screen and in the log"
 ESC=$'\033'
 ESCCARD="$W/cards/ESC"; mkdir -p "$ESCCARD/DCIM"; head -c 1000 /dev/urandom > "$ESCCARD/DCIM/A001_C001.mov"
 touch "$ESCCARD/._${ESC}[2Jboom"
-m2 "${ING[@]}" "$ESCCARD" > "$W/esc.out" 2> "$W/esc.err"
+set +e; m2 "${ING[@]}" "$ESCCARD" > "$W/esc.out" 2> "$W/esc.err"; set -e
 if grep -q "$ESC" "$W/esc.out" "$W/esc.err" "$DATA2"/logs/*.log; then fail "raw ESC byte on screen or in the log"; fi
-grep -qF '._\u{1b}[2Jboom' "$W/esc.err" || { cat "$W/esc.err"; fail "escaped junk name not shown"; }
-log2 | grep -qF '  skipped junk: ._\u{1b}[2Jboom' || fail "escaped junk name not logged"
+grep -qF '._\u{1b}[2Jboom' "$W/esc.err" || { cat "$W/esc.err"; fail "escaped name not shown"; }
 BAD="$W/cards/BAD"; mkdir -p "$BAD"; touch "$BAD/bad${ESC}[31mname.mov"
 set +e; m2 "${ING[@]}" "$BAD" 2> "$W/bad.err"; set -e
 if grep -q "$ESC" "$W/bad.err"; then fail "raw ESC in refusal message"; fi
 grep -qF 'bad\u{1b}[31mname.mov' "$W/bad.err" || { cat "$W/bad.err"; fail "refusal message not escaped"; }
-pass "junk name with an escape sequence shown and logged as \\u{1b}; refusal message escaped"
+pass "a card name with an escape sequence is refused (no junk filter) and shown as \\u{1b}; refusal message escaped"
 
 echo "== Ctrl+C, SIGTERM and kill -9 during the copy"
 BIG="$W/cards/BIG"; mkdir -p "$BIG/DCIM"
