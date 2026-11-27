@@ -233,12 +233,13 @@ A mag can be soft-locked once it has been used on a production. Soft lock does n
 
 Requirements are set at project creation. Fixed values only, chosen from lists. No free text, so no typos.
 
-Lists (locked for now):
-- Resolution: 4K, HD, SD
-- Frame rate: 24, 25, 30, 50, 60
-- Format: XAVC S 4K, XAVC S HD, AVCHD, ProRes, ProRes RAW
+Lists (locked for now), in priority order:
+1. Frame rate: 24, 25, 30, 50, 60
+2. Resolution: 4K, HD, SD
+3. GOP: intra, long-GOP
 
-A project can set any combination (e.g. 4K + 50 + XAVC S 4K). All are optional. Empty means no check.
+A project can set any combination. All are optional. Empty means no check.
+Frame rate is checked first. Then resolution. Then GOP.
 
 At ingest, after the card is probed and the project is selected:
 
