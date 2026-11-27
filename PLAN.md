@@ -471,9 +471,14 @@ Files on disk remain the source of truth. The module reloads the relevant folder
 Magvault has no internal user database. Access is the system user plus SSH keys.
 
 - **Server user** (`magvault`): admin. Can open the Profile Editor and any other admin-only module. Runs the server process.
-- **Client user** (`magvaultclient`): shared username for all clients. Each client is identified by its own unique SSH key. Can use Ingest, Logging, Dashboard, Encoder, etc. Cannot open admin-only modules.
+- **Client user** (`magvaultclient`): shared username for all clients. Each client is identified by its own unique SSH key. Can use Ingest, Logging, Dashboard, Encoder, etc. Cannot open admin-only modules unless the key is marked admin.
 
-Admin is simply “running as the `magvault` user”. Clients never become admin.
+**Admin key** (optional)
+- Most clients use a normal key. They cannot create projects.
+- A key can be marked `admin: yes` in the Key module.
+- An admin key can create a project from the client (fixed requirement lists). The Job card stays read-only for normal keys.
+- The gate checks the key label. Creating a project is logged with that label.
+- Server admin sets or clears the flag. Normal keys stay the default.
 
 ### Sudo (no root)
 
