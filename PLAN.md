@@ -561,6 +561,31 @@ Applies to all fields: camera, format, gamma, gamut, project assignment, manifes
 
 Per-file shot logging is not part of ingest.
 
+
+## Client staging cache
+
+Local staging on the client is a temporary holding area between the card and confirmed backups.
+
+- The ingest screen shows a space bar for the staging cache (used / free).
+- Auto-clean removes a staged mag as soon as at least two backups exist (for example the field set and the server, or two other confirmed copies).
+- Auto-clean can be disabled. When disabled, staged mags stay until the operator clears them.
+- If staging is the only copy, it is never auto-cleaned.
+
+## Card dump status
+
+On the card detect screen, each card shows whether it has already been dumped:
+
+- Red: not dumped. No Magvault copy exists.
+- Yellow: dumped, but not yet two copies and uploaded to the server.
+- Green: two copies exist and the mag is uploaded to the server.
+
+Status comes from hashes / mag identity, not from the volume label.
+
+## Help and log keys
+
+- F1: help for the current screen.
+- F2: log for the current card or action. On the card screen this shows what is wrong with the card (probe errors, junk, requirement mismatch, previous dump state).
+
 ## Client ingest and field backups
 
 Ingest can run on a client terminal (or standalone machine). After a successful commit the server owns the rest of the pipeline (proxy encode, etc.).
