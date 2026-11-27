@@ -99,6 +99,10 @@ No project folders on disk. All project relationships live in the database.
 - Folder name: `<YYYYMMDD>_<mag-uuid>`. Date is the **shoot day** (guessed from camera date-modified or earliest media date, confirmed by operator). Never renamed after creation.
 - Contents: exact verified copy of the card (original filenames + matching sidecars). If it was not on the SD card, it is not in the mag folder — except `magcard.txt`, the ASC MHL inventory, and the hidden `.magvault/` backups of the card.
 - No junk filter. Files that were on the card are copied, including `SALVAGE.TMP`, sidecars, and other non-media. Magvault does not drop them.
+
+**Card path**
+- Cards go from the camera to ingest. Do not mount them on a Mac before ingest.
+- Magvault does not filter Mac junk (`.DS_Store` and similar). If a Mac build is made later, that build handles Mac junk there.
 - Mag card is plain text (`magcard.txt`), complete manifest + confirmed metadata + project link. Stays with the folder forever.
 - ASC MHL inventory is written by default alongside the mag card. It contains only the standard file list, sizes, mtimes and checksums (no Magvault-specific fields).
 - Merge of mags is forbidden (including cards from the same camera, because clip names are reused).
