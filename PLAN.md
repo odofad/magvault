@@ -1266,7 +1266,7 @@ Never refuse a dump because the server is down.
 - When the server is reachable, the mag is pulled up.
 - It does not enter the encode pipeline.
 - It sits in waiting until the Project manager assigns it to a real project.
-- Project manager is where a producer approves and assigns it. Until then it is not a normal open project.
+- Anyone can create a temp project. It is not in the final archive until a producer approves it in the Project manager and assigns it to a real project.
 
 ### Phase 2 decisions
 
