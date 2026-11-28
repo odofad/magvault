@@ -500,7 +500,7 @@ Magvault has no internal user database. Access is the system user plus SSH keys.
 - Most clients use a normal key. They cannot create projects.
 - A key can be marked `producer: yes` in the Key module.
 - This is not sudo. It does not grant ZFS, Prepare, or any root helper rights.
-- It only allows production actions from the client: edit the Job card on an open project (requirements from the fixed lists). It cannot create a real project.
+- On the client it only edits the Job card on an open project. It cannot create a real project. Real project work is done by SSH to the server, not through the gate.
 - The Job card stays read-only for normal keys.
 - The gate checks the key label. Creating a project is logged with that label.
 - Server admin sets or clears the flag. Normal keys stay the default.
@@ -1301,7 +1301,7 @@ Never refuse a dump because the server is down.
 
 ### Project manager — Phase 2
 
-Server-only. Admin or producer key.
+Server-only. The producer reaches it by a normal SSH login to the server (separate from the client gate key), then runs `magvault ui`. The client does not show the Project manager.
 
 - Create a real project (name, requirements from the fixed lists, FPS required).
 - List open, closed, and temp projects.
@@ -1322,7 +1322,7 @@ Server-only. Admin or producer key.
 - A 320p job is created only when a mag is assigned to a real project. Temp mags are not encoded.
 - Telemetry on day one: queue depth, disk free, serve heartbeat.
 - Temp projects: ingest `n` always creates a temp project. FPS is required. No auto-merge by name. Client refuses a name already in use locally. Producer merges or renames in the Project manager.
-- Real projects are created only in the Project manager (admin or producer key).
+- Real projects are created only in the Project manager on the server. A producer reaches it by a normal SSH login to the server (not the gate), then runs `magvault ui`. The client stays thin: `n` creates a temp project. The producer key on the client only edits the Job card.
 - Key manager in Phase 2 is a TUI.
 - Clean: field does not manage archive copies. Server ZFS is the primary defence. USB may be wiped once synced.
 
