@@ -241,7 +241,7 @@ The client dashboard has a Job card page. The field operator loads it to see wha
 
 - Operator selects an open project.
 - The page shows the fixed values: frame rate, resolution, GOP.
-- Read-only for normal keys. Real projects are created only in the Project manager on the server. A producer key is a client SSH key; it cannot open a server screen. The producer uses the server console (or an admin session) for the Project manager. The client Job card only sets values on an existing open project.
+- Read-only for normal keys. Real projects are created only in the Project manager on the server. A producer key is a client SSH key; it cannot open a server screen. The producer uses the `magvault-producer` login for the Project manager. The client Job card only sets values on an existing open project.
 - If a project has no requirements, the page says so.
 
 ### Accountability
@@ -353,17 +353,24 @@ Plain-text files, one per profile. Live in a folder configured in path.conf (e.g
 Distilled from common ffmpeg preset tools, restricted by Magvault’s locked proxy rules.
 
 ```text
-# Magvault encoder profile
+# Magvault encoder profile (CPU)
 name: default-320p
 id: default-320p
 type: 320p          # 320p | hq | custom
 
 # Video
-codec: h264_nvenc   # GPU profile. A CPU profile uses libx264 and may set crf/preset.
+codec: libx264
 height: 320         # width calculated to preserve aspect; "source" = no resize
-rate_control: crf   # crf | bitrate
-crf: 23
+rate_control: crf
+crf: 28
 preset: veryfast
+
+# GPU profile (AMD VAAPI). No CRF/preset.
+# name: default-320p-gpu
+# id: default-320p-gpu
+# codec: h264_vaapi
+# rate_control: cq
+# cq: 23
 
 # Audio
 audio_codec: aac
@@ -499,12 +506,12 @@ Magvault has no internal user database. Access is the system user plus SSH keys.
 **Producer key** (optional) — Phase 2.
 - Most clients use a normal key. They cannot create projects.
 - A key can be marked `producer: yes` in the Key module. That flag only affects the client Job card.
-- Server Project manager access is a separate login: user `magvault-producer` (or equivalent). It can run `magvault ui` and write the database. It is not the admin `magvault` user and it is not a gate key. The phase-gate security review treats this account as a limited server login.
+- Server Project manager access is a separate login: user `magvault-producer`. The database is group-readable for it, not writable. Create, merge, rename and approve go through a producer spool that `serve` checks and applies (same pattern as client commits). `magvault ui` as that account shows only the Project manager and a read-only dashboard. It is not the admin `magvault` user and not a gate key.
 - This is not sudo. It does not grant ZFS, Prepare, or any root helper rights.
 - On the client it only edits the Job card on an open project. It cannot create a real project. Real project work is done by SSH to the server, not through the gate.
 - The Job card stays read-only for normal keys.
 - The gate checks the key label. Job card edits are logged with that label. Creating a real project is logged with the server account that ran the Project manager.
-- `ingest --project <name>`: if the name is an open real project, assign the mag to it. If the name is unknown, create a temp project (FPS required) and refuse if that name is already in use on the client. It never creates a real project.
+- `ingest --project <name>` resolves in order: open real project, then a known temp project (client-created or listed by the server), then a new temp. A new temp needs `--require-fps`. It never creates a real project. `n` refuses a name that already exists (real or temp). Two offline clients can both create a temp with the same name; the producer merges them. The server project list to clients includes open temps, marked as temp.
 - Server admin sets or clears the flag. Normal keys stay the default.
 
 ### Sudo (no root)
@@ -618,7 +625,7 @@ On the card detect screen, each card shows whether it has already been dumped:
 - Yellow: dumped, but not yet two copies and uploaded to the server.
 - Green: two copies exist and the mag is uploaded to the server.
 
-Status comes from hashes / mag identity, not from the volume label. Phase 1: the client records each mag it ingests with a fingerprint of its card (relative path, size and mtime of every file) in `<config>/dumps.txt`; a detected card with the same fingerprint is dumped. Copies counted: server (confirmed), staging, field set. A card counts as dumped only when its volume identity matches too (this client ingested this card); files that match a mag ingested from another volume (a card image, a copy) are yellow with a note, never green. Ingesting a dumped card again warns "already dumped"; `--yes` refuses unless `--force`, and the re-ingest is logged.
+Status comes from hashes / mag identity, not from the volume label. Phase 1: the client records each mag it ingests with a fingerprint of its card (relative path, size and mtime of every file) in `<config>/dumps.txt`; a detected card with the same fingerprint is dumped. Copies counted: server (confirmed), staging, field set. Green means the mag is on the server. Yellow means it is dumped here (staging or field set) but not yet on the server. Staging is a convenience buffer, not archive management. A card counts as dumped only when its volume identity matches too (this client ingested this card); files that match a mag ingested from another volume are yellow with a note, never green. Ingesting a dumped card again warns "already dumped"; `--yes` refuses unless `--force`, and the re-ingest is logged.
 
 ## Help and log keys
 
@@ -1272,7 +1279,7 @@ When a producer assigns a temp mag to a real project:
 - Encode is allowed only after assignment.
 - On the next sync or status, the server sends mag UUID → real project.
 - Client updates its local record and any staged `magcard.txt`.
-- When the field set is next mounted, client rewrites `magcard.txt` on master and slave and the project line in `magvault-backup.txt`.
+- When the field set is next mounted, the client compares each magcard's project_uuid with the cached server mapping and rewrites only the cards that differ (master and slave). It backs up the old card first and changes project keys only.
 - Folder name does not change. Media is not copied again.
 - Until the set is seen, drives may still say `(T)`. Server is the authority.
 - Client shows “assigned, drives not updated” if the set is absent.
@@ -1323,11 +1330,10 @@ Server-only. The producer reaches it by a normal SSH login to the server (separa
 - `projects.kind`: `temp` or `real`. Default `temp` for ingest `n`.
 - `projects.approved_at`, `projects.approved_by` for the producer merge.
 - `projects.requirements`: FPS required; other fields optional. GOP not format.
-- `magvault-backup.txt` gains a `project=` line so pull-back can rewrite it.
 
 ### Phase 2 decisions
 
-- Encode runs on the server. Clients do not encode. `magvault.conf` sets `encoder: gpu` or `cpu`. GPU falls back to CPU if no GPU is found and logs WARN. Two profiles: one NVENC (no CRF/preset), one libx264 (CRF/preset). The server picks the profile that matches the setting.
+- Encode runs on the server. Clients do not encode. `magvault.conf`: `encoder: gpu|cpu`, `default_profile_320p` (CPU), `default_profile_320p_gpu` (GPU). CPU profile is `default-320p` (libx264, CRF, preset). GPU profile is `default-320p-gpu` (h264_vaapi on AMD, its own rate control). With `gpu`, use the GPU profile if it works. If there is no GPU, or a job fails because the GPU encoder failed, rerun that job once on the CPU profile and log WARN.
 - A 320p job is created only when a mag is assigned to a real project. Temp mags are not encoded.
 - Telemetry on day one: queue depth, disk free, serve heartbeat.
 - Temp projects: ingest `n` always creates a temp project. FPS is required. No auto-merge by name. Client refuses a name already in use locally. Producer merges or renames in the Project manager.
