@@ -686,6 +686,12 @@ This is field USB only. It is not related to zmag primary/backup roles.
 - Prepare is only re-enabled after every mag on the set has been successfully transferred to the server.
 - A valid set with pending mags remains selectable as a target; it simply cannot be re-prepared until synced.
 
+
+**Clean and copies**
+- The server is the secure archive. A single server copy is acceptable until zmags exist.
+- Once a mag is synced, Clean may wipe it from the USB set. No extra warning about "only copy".
+- The camera card is outside Magvault. Clean does not touch it.
+
 **Clean**
 - Available only when every mag on the set is synced (no pending).
 - Opens a popup: “All mags on <set> are on the server. Wipe master and slave?”
