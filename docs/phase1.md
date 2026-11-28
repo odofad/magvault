@@ -1,3 +1,5 @@
+> Phase 2 note: this document describes Phase 1 code. Phase 2 replaces name-merge, `--project NEW` creating a real project, and a 320p job on every commit. See PLAN.md Phase 2 decisions.
+
 # Phase 1 — implementation notes
 
 Phase 1 from PLAN.md's roadmap: client ingest and field backups. A client (DIT laptop)

@@ -241,7 +241,7 @@ The client dashboard has a Job card page. The field operator loads it to see wha
 
 - Operator selects an open project.
 - The page shows the fixed values: frame rate, resolution, GOP.
-- Read-only for normal keys. A producer key can create a project and set requirements from the client. The server admin can also create projects.
+- Read-only for normal keys. Real projects are created only in the Project manager on the server. A producer key is a client SSH key; it cannot open a server screen. The producer uses the server console (or an admin session) for the Project manager. The client Job card only sets values on an existing open project.
 - If a project has no requirements, the page says so.
 
 ### Accountability
@@ -257,7 +257,7 @@ Lists (locked for now), in priority order:
 2. Resolution: 4K, HD, SD
 3. GOP: intra, long-GOP
 
-A project can set any combination. All are optional. Empty means no check.
+A project can set any combination. FPS is required. Other requirements are optional. Empty of those means no check for them.
 Frame rate is checked first. Then resolution. Then GOP.
 
 At ingest, after the card is probed and the project is selected:
@@ -271,7 +271,7 @@ At ingest, after the card is probed and the project is selected:
 Project creation must offer these lists. Editing later is allowed, but the values stay from the same lists.
 
 Phase 1 implementation:
-- Stored as `projects.requirements` (`fps=25 res=HD gop=intra`). Set when the project is created: `--require-fps`, `--require-resolution`, `--require-gop` on `ingest` (server or client), or the New project popup in the TUI. An existing project keeps its values; different flags are refused.
+- Stored as `projects.requirements` (`fps=25 res=HD gop=intra`). Set when the project is created in the Project manager. Ingest `n` creates a temp project only (FPS required). An existing real project keeps its values; ingest cannot change them.
 - The card is compared with one value per card (the clips' frame rate, resolution class 4K / HD / SD, intra or long-GOP from the codec). 23.976 counts as 24, 29.97 as 30, 59.94 as 60. A mixed card fails when any clip differs. A value the card does not report is not a mismatch ("not checked").
 - The project log is the `project_log` table; `magvault project-log <project>` shows it. The mag card gets `requirements_warning: …`. The server re-checks every client upload against its own requirements and logs the mismatch.
 
@@ -359,7 +359,7 @@ id: default-320p
 type: 320p          # 320p | hq | custom
 
 # Video
-codec: h264_nvenc   # or libx264 if encoder: cpu
+codec: h264_nvenc   # server uses this when encoder: gpu; libx264 when encoder: cpu
 height: 320         # width calculated to preserve aspect; "source" = no resize
 rate_control: crf   # crf | bitrate
 crf: 23
@@ -494,13 +494,13 @@ Files on disk remain the source of truth. The module reloads the relevant folder
 Magvault has no internal user database. Access is the system user plus SSH keys.
 
 - **Server user** (`magvault`): admin. Can open the Profile Editor and any other admin-only module. Runs the server process.
-- **Client user** (`magvaultclient`): shared username for all clients. Each client is identified by its own unique SSH key. Can use Ingest, Logging, Dashboard, Encoder, etc. Cannot open admin-only modules. A producer key can create projects; it does not open admin modules.
+- **Client user** (`magvaultclient`): shared username for all clients. Each client is identified by its own unique SSH key. Can use Ingest, Logging, Dashboard, Encoder, etc. Cannot open admin-only modules. A producer key may edit the Job card on an open project. It cannot create real projects from the client.
 
 **Producer key** (optional) — Phase 2.
 - Most clients use a normal key. They cannot create projects.
 - A key can be marked `producer: yes` in the Key module.
 - This is not sudo. It does not grant ZFS, Prepare, or any root helper rights.
-- It only allows production actions from the client: create a project, set its requirements from the fixed lists.
+- It only allows production actions from the client: edit the Job card on an open project (requirements from the fixed lists). It cannot create a real project.
 - The Job card stays read-only for normal keys.
 - The gate checks the key label. Creating a project is logged with that label.
 - Server admin sets or clears the flag. Normal keys stay the default.
@@ -578,7 +578,7 @@ Applies to all fields: camera, format, gamma, gamut, project assignment, manifes
    - Only proceeds to commit if verification passes.
 6. Write complete-manifest magcard.txt and ASC MHL inventory into the dump folder.
 7. Insert records in SQLite.
-8. Queue 320p proxy generation on the server (does not block ingest).
+8. If the mag is assigned to a real project, queue a 320p job. Temp mags are not encoded.
 9. Mag is now online and linked. Server encodes when it has capacity.
 
 Per-file shot logging is not part of ingest.
@@ -800,7 +800,7 @@ Module-specific actions use single letters. They must not collide with the share
 ### Ingest
 | Key | Action |
 |-----|--------|
-| `n` | New project (then its requirements from the fixed lists) |
+| `n` | New temp project (name + FPS required) |
 | `r` | Rescan for cards |
 | `p` | Pull (start verified copy) |
 | `o` | Prepare selected not-valid USB (sudo) |
@@ -871,7 +871,7 @@ The dashboard is the landing screen. Every other module returns to it with `Esc`
 
 ## Encoder module
 
-Mostly automatic: successful ingest queues a 320p job on the server. The module is the place to watch, manage, and override.
+Mostly automatic: assignment to a real project queues a 320p job on the server. The module is the place to watch, manage, and override.
 
 **Queue view**
 - Depth, active jobs (progress, mag, type 320p/HQ/custom, profile, elapsed), waiting jobs, failed jobs.
@@ -897,7 +897,7 @@ Dashboard stays light (queue depth + active progress). Full management lives in 
 
 - `proxies/db/` — always-on 320p library proxies. Same folder naming as mags.
 - `proxies/hq/` — optional full-resolution lower-bitrate HEVC (30-60 Mbps). Same naming. Generated only when requested.
-- 320p generation is queued on the server after ingest commit so it never delays I/O. Faster servers simply clear the queue sooner.
+- A 320p job is created only when a mag is assigned to a real project (ingest into a real project, or Project manager assignment). Temp mags are not encoded. Jobs already queued in Phase 0/1 for real projects stay queued.
 - Per-asset (or whole-mag) toggle in the encoding stage decides what also goes to `hq/`. Noted for later.
 - NLE-specific proxies (Resolve etc.) are created with bin exports and live with the bins, not here.
 
@@ -1248,7 +1248,7 @@ Full rationale and the complete specification are in `docs/technical-review-and-
 ### Phase 0 – Foundation
 - Config directory + path.conf + system pointer file.
 - SQLite schema.
-- Manual-path ingest: probe, confirm, hash at ingest, verified copy, magcard.txt + ASC MHL, DB records, queue 320p.
+- Manual-path ingest: probe, confirm, hash at ingest, verified copy, magcard.txt + ASC MHL, DB records. 320p job only if the project is real.
 - Conflict handling (database wins for metadata, magcard backed up).
 - Basic shell only.
 
@@ -1308,6 +1308,13 @@ Server-only. Admin or producer key.
 - Merge a temp into an existing real project, or assign a new name.
 - Edit requirements. A change only affects the incompatibility warning on later ingests. Old mags are not rewritten.
 - Job card is the client view of an open project's requirements.
+
+
+**Encoder backend**
+- `path.conf` key `encoder: gpu` or `encoder: cpu`. Default `gpu`.
+- `gpu` uses NVENC when a GPU is present. If no GPU is found, fall back to CPU and log WARN.
+- `cpu` uses libx264. CRF and preset apply only to libx264. NVENC uses its own rate control.
+- Courage: confirm GPU model before Phase 2 coding. The profile file stores one codec; the server picks the matching profile.
 
 ### Phase 2 decisions
 
