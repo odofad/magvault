@@ -362,15 +362,8 @@ type: 320p          # 320p | hq | custom
 codec: libx264
 height: 320         # width calculated to preserve aspect; "source" = no resize
 rate_control: crf
-crf: 28
+crf: 23
 preset: veryfast
-
-# GPU profile (AMD VAAPI). rate_control: qp is VAAPI constant quality (ffmpeg -rc_mode CQP -qp N).
-# name: default-320p-gpu
-# id: default-320p-gpu
-# codec: h264_vaapi
-# rate_control: cq
-# cq: 23
 
 # Audio
 audio_codec: aac
@@ -381,6 +374,22 @@ audio_bitrate: 128k
 container: mp4
 
 notes: Library proxy. Queued only after assignment to a real project.
+```
+
+**GPU example (AMD VAAPI)**
+```text
+# Magvault encoder profile (GPU, AMD VAAPI)
+name: default-320p-gpu
+id: default-320p-gpu
+type: 320p
+codec: h264_vaapi
+height: 320
+rate_control: qp      # VAAPI constant quality: ffmpeg -rc_mode CQP -qp N
+qp: 26
+audio_codec: aac
+audio_bitrate: 128k
+container: mp4
+notes: Library proxy on the GPU. Same proxy rules as default-320p.
 ```
 
 **HQ example**
@@ -406,7 +415,7 @@ container: mp4
 **Required minimum**
 - `name`, `id`, `type`
 - `codec`, `height`
-- `rate_control` + either `crf` or `bitrate`
+- `rate_control` (`crf`, `bitrate` or `qp`) + its matching value. `crf` and `preset` are for libx264 only; a VAAPI profile that sets them is refused when profiles load.
 - `audio_codec`
 
 
