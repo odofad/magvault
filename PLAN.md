@@ -365,7 +365,7 @@ rate_control: crf
 crf: 28
 preset: veryfast
 
-# GPU profile (AMD VAAPI). No CRF/preset.
+# GPU profile (AMD VAAPI). rate_control: qp is VAAPI constant quality (ffmpeg -rc_mode CQP -qp N).
 # name: default-320p-gpu
 # id: default-320p-gpu
 # codec: h264_vaapi
@@ -506,7 +506,7 @@ Magvault has no internal user database. Access is the system user plus SSH keys.
 **Producer key** (optional) — Phase 2.
 - Most clients use a normal key. They cannot create projects.
 - A key can be marked `producer: yes` in the Key module. That flag only affects the client Job card.
-- Server Project manager access is a separate login: user `magvault-producer`. The database is group-readable for it, not writable. Create, merge, rename and approve go through a producer spool that `serve` checks and applies (same pattern as client commits). `magvault ui` as that account shows only the Project manager and a read-only dashboard. It is not the admin `magvault` user and not a gate key.
+- Server Project manager access is a separate login: user `magvault-producer`. The database is group-readable for it, not writable. The database stays in rollback-journal mode; `magvault-producer` opens it read-only. Every producer write goes through a producer spool that `serve` checks and applies: create, merge, rename, approve, edit requirements, close and reopen. Admin writes go through `serve` too, so there is one write path. `magvault ui` as that account shows only the Project manager and a read-only dashboard. It is not the admin `magvault` user and not a gate key.
 - This is not sudo. It does not grant ZFS, Prepare, or any root helper rights.
 - On the client it only edits the Job card on an open project. It cannot create a real project. Real project work is done by SSH to the server, not through the gate.
 - The Job card stays read-only for normal keys.
@@ -621,9 +621,9 @@ Local staging on the client is a temporary holding area between the card and con
 
 On the card detect screen, each card shows whether it has already been dumped:
 
-- Red: not dumped. No Magvault copy exists.
-- Yellow: dumped, but not yet two copies and uploaded to the server.
-- Green: two copies exist and the mag is uploaded to the server.
+- Red: not dumped here. No Magvault copy from this card.
+- Yellow: dumped here (staging or field set), not yet on the server; or the files match a mag from another volume.
+- Green: on the server.
 
 Status comes from hashes / mag identity, not from the volume label. Phase 1: the client records each mag it ingests with a fingerprint of its card (relative path, size and mtime of every file) in `<config>/dumps.txt`; a detected card with the same fingerprint is dumped. Copies counted: server (confirmed), staging, field set. Green means the mag is on the server. Yellow means it is dumped here (staging or field set) but not yet on the server. Staging is a convenience buffer, not archive management. A card counts as dumped only when its volume identity matches too (this client ingested this card); files that match a mag ingested from another volume are yellow with a note, never green. Ingesting a dumped card again warns "already dumped"; `--yes` refuses unless `--force`, and the re-ingest is logged.
 
@@ -1320,10 +1320,12 @@ Server-only. The producer reaches it by a normal SSH login to the server (separa
 
 
 **Encoder backend**
-- `magvault.conf` key `encoder: gpu` or `encoder: cpu`. Default `gpu`. Not in path.conf.
-- `gpu` uses NVENC when a GPU is present. If no GPU is found, fall back to CPU and log WARN.
-- `cpu` uses libx264. CRF and preset apply only to libx264. NVENC uses its own rate control.
-- Courage: confirm GPU model before Phase 2 coding. The profile file stores one codec; the server picks the matching profile.
+- `magvault.conf`: `encoder: gpu|cpu` (default gpu), `default_profile_320p: default-320p`, `default_profile_320p_gpu: default-320p-gpu`, `vaapi_device: /dev/dri/renderD128`.
+- `gpu`: AMD VAAPI (`h264_vaapi`) with the GPU profile. If the render device is not usable at start, use the CPU profile and log WARN once.
+- If a job fails on the GPU, rerun it once on the CPU profile and log WARN. If the CPU run also fails, the job is failed with the CPU error.
+- `cpu`: libx264 with the CPU profile.
+- Server setup: `magvault` in group `render`. Check with `vainfo`.
+- Decode on CPU, encode on GPU. Convert to 8-bit 4:2:0 (`format=nv12,hwupload,scale_vaapi`) so every camera works the same way. Width is computed from the probed source and passed to `scale_vaapi`.
 
 
 **Phase 2 schema (before coding)**
