@@ -64,12 +64,12 @@ Remote zmag stations, split, HQ toggle, separate mouse-first desktop client, pac
 Each phase leaves a usable terminal system. Full detail is in PLAN.md.
 
 
-## Version track
+## Roadmap — tick-tock
 
-- **1.0** — this plan, built and tested phase by phase.
-- **1.x** — small fixes and patches only (1.1 through 1.4x).
-- **1.5** — full rewrite for structure and optimisation. No new features. Then held stable: critical and security fixes only.
-- **2.0** — new features. Same cycle: 2.x patches, then 2.5 rewrite held stable.
+- **Tick (1.0, 2.0):** new architecture. New features, new modules, new rules. Built and tested phase by phase.
+- **Tock (1.5, 2.5):** same architecture, better implementation. Full rewrite for structure and optimisation. No new features. Then held stable: critical and security fixes only.
+- **1.x / 2.x:** small fixes only between a tick and its tock (1.1–1.4x, then 2.1–2.4x).
+- A new feature only on a .0. A clean rebuild only on a .5.
 
 ## Status
 
