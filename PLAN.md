@@ -1254,6 +1254,20 @@ Full rationale and the complete specification are in `docs/technical-review-and-
 - Server confirmation + autoclean (after two backups).
 
 
+
+### Offline temp project
+
+Never refuse a dump because the server is down.
+
+- Ingest screen option: **create temp project**.
+- Temp projects show a `(T)` suffix.
+- Operator sets a project name and FPS (other requirements optional).
+- Dump proceeds as normal and gets a UUID. Copy can go to staging and/or the field set.
+- When the server is reachable, the mag is pulled up.
+- It does not enter the encode pipeline.
+- It sits in waiting until the Project manager assigns it to a real project.
+- Project manager is where a producer approves and assigns it. Until then it is not a normal open project.
+
 ### Phase 2 decisions
 
 - Encode runs on the server GPU only. Clients do not encode.
