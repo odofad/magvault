@@ -1,151 +1,143 @@
-# Magvault — Phase 2 plan review (PLAN.md at `4888830`)
+# Magvault — Phase 2 plan review (PLAN.md at `79d8b60`)
 
-Date: 2026-11-28. Checked:
-- PLAN.md at `4888830` ("Align Phase 2 plan with locked decisions"), whole file;
-- docs/phase1.md.
+Date: 2026-11-28. Second review. Checked:
+- PLAN.md at `79d8b60` ("Lock producer access: SSH to server for Project manager"), whole
+  file, against the seven locked Phase 2 rules and the producer SSH path;
+- docs/phase1.md and docs/test-checklist.md for leftovers.
 
-Seven locked rules were checked; each item below is a contradiction or a gap. Line numbers
-are PLAN.md at `4888830` unless docs/phase1.md is named. No code was changed.
+The first review (at `4888830`) listed blockers B1–B6. Since then, `1110f8a` and `79d8b60`
+edited PLAN.md and added the Phase 2 note to docs/phase1.md. Line numbers are PLAN.md at
+`79d8b60`. No code or PLAN changes were made.
 
-## Verdict: FAIL (close)
+## Verdict: FAIL (three wording blockers)
 
-The new Phase 2 sections are consistent with each other:
-- Phase 2 decisions;
-- Phase 2 roadmap;
-- Temp project names;
-- Offline temp project;
-- Project manager;
-- Clean and copies.
+- B2, B3 and B6 are fixed. B4 is fixed by the new producer SSH rule.
+- B1 and B5 are mostly fixed. One question is left in each, and both change code:
+  - X3: the CLI with a new project name;
+  - X2: how the server picks the GPU or the CPU profile.
+- The new producer path adds one question: X1, which Unix account the producer uses.
 
-Older sections still say the opposite on three locked rules: real projects only in the
-Project manager, no encode until assignment, and GPU with CPU fallback. Two of these also
-leave an open question that changes code (B2, B4). Six blocking edits (B1–B6) make it a
-pass; none needs a new design.
+All three are short PLAN edits; none needs a new design.
 
 ## Locked rules
 
-| # | Rule | Result | Why |
+| # | Rule | Result | Notes |
 |---|---|---|---|
-| 1 | `n` always creates a temp project, FPS required | **Fail** | B1, B6 |
-| 2 | No encode until assignment | **Fail** | B2, B3 |
-| 3 | No auto-merge; the client refuses a reused name; the producer merges or renames | **Pass** in PLAN.md | docs/phase1.md still describes the merge (D1). One wording gap (N1). |
-| 4 | Real projects only in the Project manager | **Fail** | B1, B4 |
-| 5 | Key manager is a TUI | **Pass** | Phase 5 still lists a Key module (N4) |
-| 6 | GPU with CPU fallback | **Fail** | B5 |
-| 7 | Clean: field does not manage copies; server ZFS is the defence | **Pass** | Staging autoclean and dump colours still count copies on the field side (N2) |
+| 1 | `n` always creates a temp project. FPS is required. | **Pass** | Stated in four places: L260, L274, L803 and L1324. The schema line L122 still says "optional" (N9). |
+| 2 | No encode until the mag is assigned to a real project | **Pass** | Covered at ingest step 8 (L581), the Encoder module (L874), Proxies (L900), the Phase 0 roadmap (L1251), the decisions (L1322) and the roadmap (L1330). L900 says that ingest into a real project counts as assignment, and Phase 0/1 queued jobs stay queued. |
+| 3 | No auto-merge. Client refuses a reused name. Producer merges or renames on the server. | **Pass** | Temp project names (L1279–1285) and the decisions (L1324). The scope of "exists on the client" is still open (N1). |
+| 4 | Real projects are created only in the Project manager on the server | **Fail** | X3: PLAN is silent on `ingest --project <new name>`, and Phase 0 server ingest creates a real project today. L505 is stale ("Creating a project is logged with that label"). |
+| 5 | Key manager is a TUI | **Pass** | Decisions L1326 and roadmap L1335. Naming leftovers: "Key module" at L501, L1064, L1356 (N4). |
+| 6 | GPU with CPU fallback | **Fail** | X2: profile selection is not consistent, and `encoder:` is put in `path.conf`. |
+| 7 | Clean: field does not manage copies. Server ZFS is the defence. | **Pass** | Clean and copies (L690–693) and the decisions (L1327). Staging autoclean and green wording still count copies on the field side (N2). |
 
-## Blocking contradictions (fix before Phase 2 code)
+## Also confirmed
 
-**B1. Project creation outside the Project manager.**
-Four places still let other paths create real projects:
-- **L244 (Job card):** "A producer key can create a project and set requirements from the
-  client. The server admin can also create projects."
-- **L503 (Producer key):** "It only allows production actions from the client: create a
-  project, set its requirements".
-- **L274 (Project requirements, Phase 1 implementation):** requirements are "Set when the
-  project is created: `--require-*` on `ingest` (server or client), or the New project popup
-  in the TUI."
-- **Server `ingest --project NEW` (Phase 0 CLI):** this still creates a real project.
-  PLAN never says what it does now.
+**Producer SSH path: stated clearly, no conflict with the gate.**
+- **L1304:** "normal SSH login to the server (separate from the client gate key), then runs
+  `magvault ui`".
+- **L244 and L503:** the producer key cannot create from the client; real project work is
+  by SSH to the server.
+- **L1325:** the same, plus "the client stays thin".
 
-Rule 4 says real projects are created only in the Project manager. Fix all four, and say
-what `ingest --project <new name>` does:
-- on the client: a temp project, with `--require-fps` mandatory;
-- on the server: temp, or refused.
+The gate is untouched: the producer's server login is a different key and account from
+the forced-command key. The client producer key only edits the Job card.
 
-**B2. 320p still queued at ingest.**
-- **L874 (Encoder module):** "successful ingest queues a 320p job on the server."
-- **L900 (Proxies):** "320p generation is queued on the server after ingest commit".
+**Two follow-ups:**
+- **X1 (blocker):** which account the producer logs in as (below).
+- **Job card edits (L244, L496, L503):** they need a write path from the client. The gate
+  runs as `magvaultclient` and cannot write the database, so an edit must be a request that
+  `serve` applies after checking the key's producer flag. Say so when the Job card is
+  specified; not a blocker now.
 
-Both contradict L1315: "A 320p job is created only when a mag is assigned to a real
-project." Rewrite both lines.
+**docs/phase1.md Phase 2 note: present.** Line 1 says Phase 2 replaces the name merge,
+`--project NEW` creating a real project, and the 320p job on every commit.
 
-**B3. When a mag ingested into a real project gets its job.**
-Rule 2 and L1315 say "only when a mag is assigned". Temp project names (L1285) still allows
-a mag to go straight into an open real project when the operator selects it. Say that
-ingest into a real project counts as assignment, so the job is created at commit.
+## Remaining blockers
 
-Also say what happens to the 320p jobs already queued by Phase 0/1. All of them belong to
-real projects. The old roadmap line "picked up" was removed, and nothing replaces it.
+**X1. Which Unix account the producer uses on the server.**
+L1304 says "a normal SSH login", and L244 says "the server console (or an admin session)".
+The only server account in the User model (L496) is `magvault`, the admin: Profile Editor,
+all admin modules, the sudo helper rule. If producers log in as `magvault`, the Project
+manager cannot tell a producer from the admin.
 
-**B4. "Server-only. Admin or producer key." (L1304) cannot work as written.**
-A producer key is a client SSH key. It is locked to the forced-command gate as
-`magvaultclient`, so it cannot open a server TUI. Choose one:
-- the Project manager is reachable from the client for producer keys, through the gate and
-  checked by `serve`;
-- producer actions are a separate client screen (the Job card) that sends requests;
-- producers use the server machine as admin.
+The database belongs to `magvault`, so a separate producer account also needs a way to
+write it. Choose one:
+- producers use the admin account (then say producer = admin on the server);
+- producers have their own accounts in a `magvault-producer` group, with the Project
+  manager limited to project actions, and database access through that group or through
+  `serve`.
 
-L244 and L503 must then match the choice.
+The security review at the phase gate needs this answer.
 
-**B5. The GPU / CPU encoder rule is not expressible in the profile.**
-- **L362:** `codec: h264_nvenc   # or libx264 if encoder: cpu` is a comment, not a rule. One
-  `.enc` file has one codec.
-- **L363–365:** `rate_control: crf`, `crf: 23` and `preset: veryfast` are libx264 options.
-  NVENC uses `cq` / `p1`–`p7`, so the example is invalid on the GPU path.
+**X2. GPU / CPU profile selection.**
+1. **L362 vs L1317:**
+   - L362 keeps one profile (`default-320p`) with `codec: h264_nvenc` and the comment
+     "libx264 when encoder: cpu".
+   - L1317 says "The profile file stores one codec; the server picks the matching
+     profile".
 
-L1314 puts `encoder: gpu|cpu` "in config" but does not name the file (server
-`magvault.conf`). It also does not say what `gpu` does when no GPU is found.
+   These two describe different designs: one profile with a swapped codec, or two
+   profiles.
+2. **Invalid example:** the example still sets `rate_control: crf`, `crf: 23` and
+   `preset: veryfast` with `h264_nvenc`. L1316 itself says CRF and preset apply only to
+   libx264, so the example is invalid as written.
+3. **How the server picks:** the server's `magvault.conf` has one
+   `default_profile_320p: default-320p`, and PLAN does not say how a GPU and a CPU profile
+   are named or chosen. Example: `default_profile_320p_gpu` / `_cpu`, or a `backend: gpu|cpu`
+   key in each `.enc`.
+4. **Wrong file:** L1314 puts `encoder:` in `path.conf`. The directory layout (L48–49,
+   L471) says `path.conf` holds roots only and non-path settings live in `magvault.conf`.
 
-Choose one of these, and give an example that ffmpeg accepts on both paths:
-- separate GPU and CPU fields in one profile (`codec_gpu` / `codec_cpu` with their own
-  quality keys);
-- two profiles, chosen by the setting.
+Fix:
+- give two example profiles (one NVENC with its own rate control, one libx264);
+- state the selection rule;
+- move `encoder:` to `magvault.conf`.
 
-Also name the GPU family on courage (NVENC, VAAPI or AMF). The test checklist only says
-"GPU encoder/decoder".
+Confirming courage's GPU model (L1317) is a pre-coding task, not a plan contradiction.
 
-**B6. "FPS required" vs "All are optional".**
-L260 says "A project can set any combination. All are optional. Empty means no check."
-Two other places say FPS is required:
-- L1317: temp projects;
-- L1306: Project manager real projects.
+**X3. CLI ingest with a new project name (B1 remainder).**
+PLAN now says ingest `n` creates a temp project. It does not say what the CLI does with a
+name that is not an open real project:
+- client `magvault ingest --project <new>`;
+- server `magvault ingest --project <new>`, the Phase 0 path, which today creates a real
+  project.
 
-The Job card (L245) still has "If a project has no requirements, the page says so". That
-can now happen only for projects from Phase 0/1. Reword L260: FPS required for new
-projects; resolution and GOP optional; older projects may have none.
+"CLI and scripting" requires every TUI action to have a CLI form. Under rule 4 the answer
+should be one of:
+- both create a temp project, with `--require-fps` mandatory;
+- the server refuses a new name.
 
-## Non-blocking contradictions and stale lines
+Also fix L505 "Creating a project is logged with that label". On the client a producer key
+only edits the Job card, so the log line should cover that edit.
 
-| # | Where | Issue |
-|---|---|---|
-| N1 | L1283, L1317 | "If the name already exists on the client, the client refuses": does "on the client" include the server's open projects cached on the client (`projects.cache`), or only temps this client made? The difference decides whether a temp may share a real project's name, which is the case the producer merge exists for. |
-| N2 | L606–610, L617, L631 | **Staging autoclean and dump colours count copies on the field side.** Staging is kept until server + field set (two backups); green needs "two copies". With rule 7 the field does not manage archive copies, so confirm one of these:<ul><li>keep as is (staging is a convenience buffer, not archive management);</li><li>simplify to "clean staging after server confirm" and "green = on the server".</li></ul>After a set is cleaned, a docked card turns yellow ("1 copy"). That is consistent with today's text but may confuse the crew. |
-| N3 | L803 | Ingest key `n`: "New project (then its requirements from the fixed lists)". Should say "New temp project (name + FPS required; `(T)`)". |
-| N4 | L1349, Key module section (L1059) | Phase 5 still lists "Key module (admin, generate or accept, USB export, discard on leave)", but Phase 2 has the Key manager TUI. Merge the two: the Phase 2 Key manager is the Key module. Trim Phase 5 to what is left, if anything. |
-| N5 | L759, L1102 vs L1316 | Telemetry: the dashboard and Telemetry sections require ZFS health of the working datasets and zmags; Phase 2 day one is queue depth, disk free and serve heartbeat. Say ZFS health comes in Phase 4 (or Phase 2 for the working datasets), and add the gate verb for the client's queue depth (L768 "simple queue depth number"). |
-| N6 | L763, L768, L795 | Dashboard menus and letters have no Encoder, Project manager, Key manager or client Job card entry. |
-| N7 | L1273 | Pull-back rewrites "the project line in `magvault-backup.txt`". That file has no project line (`mag_folder \| state \| updated`). Add a column (format bump) or drop the clause. |
-| N8 | L558 vs L1186, L1269 | Conflict handling: the database wins for "project assignment, manifest…", but the threat model says the manifest is never auto-resolved. The pull-back rewrite should change project keys only. Say so there. |
-| N9 | L116–123 (schema) | The projects table has no temp kind or approval fields, and status is open / closed only. The Project manager also needs merge history and who approved. Add the fields before schema 3 is written. |
-| N10 | L108 vs L1284, L1308 | "Merge of mags is forbidden" sits next to "merge a temp into an existing project". The second is a project merge (mags move between projects, folders unchanged). One clause avoids a misread. |
-| N11 | L130, L134, L419, L623, L1242, L1352 | Leftovers from the Phase 0/1 audit:<ul><li>camera "or free text";</li><li>status "archived";</li><li>log levels without DEBUG;</li><li>F1 "In this batch";</li><li>master/slave "or drop the distinction";</li><li>Phase 5 "Sudo helper" (built in Phase 1).</li></ul> |
+## Non-blocking items still open
 
-## docs/phase1.md (describes Phase 1 code that Phase 2 replaces)
-
-These are correct for the Phase 1 code but contradict the Phase 2 rules. Add a one-line
-note at the top: Phase 2 replaces project creation and the name merge. Or update them when
-Phase 2 lands.
-
-| # | Where | Issue |
-|---|---|---|
-| D1 | docs/phase1.md L402–410 ("Projects on a client"), L492 (tests: "offline projects merged by name") | The server reuses the one open project with the same name: an auto-merge, against rule 3. |
-| D2 | docs/phase1.md L48, L83, L274–275 | `ingest --project NEW --require-*` and the TUI `n` create a real project with requirements. Against rules 1 and 4. |
-| D3 | docs/phase1.md L334, L384–386 | Every commit queues a 320p job. Against rule 2 (fine for Phase 1, which has no worker). |
+| # | Item | Where | State |
+|---|---|---|---|
+| N1 | Name-exists scope | L1283 "already exists on the client", L1324 "in use locally" | **Open.** Does it include the server's open projects cached on the client (`projects.cache`)? That decides whether a temp may share a real project's name, which is the case the producer merge is for. Needed before the temp-project code. |
+| N7 | `magvault-backup.txt` project line | L1273 | **Open.** The file has no project line (`mag_folder \| state \| updated`). Add a column (format bump) or drop the clause. Needed before the pull-back code. |
+| N9 | Schema fields | L116–123 | **Open.** No temp kind, approval or merge history, and status is still open / closed only. L122 still says requirements are "optional" and lists "resolution, frame rate, format" (should be FPS required; GOP, not format). Needed before schema 3. |
+| N2 | Staging autoclean and green wording | L606–610, L617, L631 | **Open.** Staging is still kept until "two backups"; green still means "two copies". With rule 7, confirm one of these:<ul><li>keep as is (staging is a buffer, not archive management);</li><li>simplify to "clean after server confirm" and "green = on the server".</li></ul> |
+| N6 | Dashboard letters | L763, L768, L795 | **Open.** No letter or menu entry for Encoder, Project manager, Key manager, or the client Job card. |
+| N4 | Key module naming | L501, L1064, L1356 | **Open.** "Key module" (and Phase 5 "Key module (admin…)") vs the Phase 2 "Key manager" TUI. Use one name; trim Phase 5. |
+| N5 | Telemetry scope | L759, L1102 vs L1323 | **Open.** ZFS health is required in the dashboard sections, while day one is queue depth, disk free and serve heartbeat. The client queue-depth gate verb is unnamed. |
+| N8 | Conflict handling vs threat model | L558 vs L1186 | **Open.** The pull-back rewrite should change project keys only, never the manifest. |
+| N10 | "Merge of mags is forbidden" next to a project merge | L108 vs L1284, L1308 | **Open.** One clause would avoid a misread. |
+| N11 | Audit leftovers | L130, L134, L419, L623, L1242, L1359 | **Open:**<ul><li>camera "free text";</li><li>"archived";</li><li>no DEBUG level;</li><li>F1 "In this batch";</li><li>master/slave "or drop the distinction";</li><li>Phase 5 "Sudo helper".</li></ul> |
+| — | docs/test-checklist.md | L14, L38, L45 | **Open.** Still lists a `magvaultclient` user on the client; the client runs as the operator's own account. |
 
 ## To pass
 
-**Edit PLAN.md:**
-1. **B1, B4:** say where real projects are made, and how a producer reaches the Project
-   manager. Fix L244, L274, L503. Say what `ingest --project <new>` does on the client and
-   on the server.
-2. **B2, B3:** fix L874 and L900. Say that ingest into a real project is an assignment.
-   Say what happens to the Phase 0/1 queued jobs.
-3. **B5:** choose how a profile names its GPU and CPU codecs. Fix the example and name the
-   config file. Say what happens when `encoder: gpu` finds no GPU.
-4. **B6:** reword L260 for FPS required.
+1. **X1:** name the producer's server account and how it differs from the admin `magvault`
+   account, including database access.
+2. **X2:**
+   - two example encoder profiles (NVENC and libx264, each with valid options);
+   - the rule that picks one;
+   - `encoder:` moved to `magvault.conf`.
+3. **X3:**
+   - what `ingest --project <new name>` does on the client and on the server;
+   - L505 reworded for Job card edits.
 
-**Then:**
-5. Put the Phase 2 note on docs/phase1.md (D1–D3).
-6. The N items can go in the same edit, or as the code reaches them. N1, N7 and N9 are
-   needed before the temp-project and pull-back code.
+**Before the code that needs them:** N1 and N9 before the temp-project code and schema 3;
+N7 before the pull-back code. The other N items can follow as the code reaches them.
