@@ -1273,9 +1273,10 @@ When a producer assigns a temp mag to a real project:
 
 Never refuse a dump because the server is down.
 
-- Ingest screen option: **create temp project**.
+- Ingest `n` (new project) always creates a temp project. There is no real-project create on that screen.
 - Temp projects show a `(T)` suffix.
 - Operator sets a project name and FPS (other requirements optional).
+- Dumping and uploading are unhindered. Approval only gates the encode pipeline, not the copy.
 - Dump proceeds as normal and gets a UUID. Copy can go to staging and/or the field set.
 - When the server is reachable, the mag is pulled up.
 - It does not enter the encode pipeline.
