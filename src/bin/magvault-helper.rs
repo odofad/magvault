@@ -99,6 +99,16 @@ fn under_mount_parents(mp: &str) -> bool {
     MOUNT_PARENTS.iter().any(|p| mp.starts_with(p))
 }
 
+/// `FIELD-A_M` / `FIELD-A_S`: the label Prepare gives a set drive.
+fn is_set_fs_label(l: &str) -> bool {
+    match l.rsplit_once('_') {
+        Some((set, "M" | "S")) => {
+            !set.is_empty() && set.len() <= 12 && set.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'-')
+        }
+        _ => false,
+    }
+}
+
 fn valid_fs_label(l: &str) -> bool {
     let b = l.as_bytes();
     !b.is_empty()
@@ -271,6 +281,27 @@ fn usb_format(args: &[String]) {
         if p.join(BACKUP_FILE).exists() && parse_backup(p).mags.iter().any(|(_, s)| s == "pending")
         {
             die("drive holds mags pending server sync; Prepare is blocked until every mag is synced");
+        }
+    }
+    // A drive of a prepared field set (ext4 labelled <SET>_M / <SET>_S) is only re-prepared
+    // while mounted, so its list was checked above. Unmounted, refuse: it is a set that is
+    // simply not mounted, not a blank drive.
+    if ours.is_empty() {
+        let out = std::process::Command::new("lsblk")
+            .args(["-n", "-r", "-o", "FSTYPE,LABEL"])
+            .arg(&dev)
+            .env("LC_ALL", "C")
+            .output();
+        if let Ok(o) = out {
+            for l in String::from_utf8_lossy(&o.stdout).lines() {
+                let mut it = l.split(' ');
+                let (fs, lab) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
+                if fs == "ext4" && is_set_fs_label(lab) {
+                    die(&format!(
+                        "drive is a field set drive ({lab}) that is not mounted; mount it first (Prepare never formats an unmounted set drive)"
+                    ));
+                }
+            }
         }
     }
     for mp in &ours {

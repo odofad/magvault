@@ -34,6 +34,8 @@ pub struct Card {
     pub problem: Option<String>,
     /// Content fingerprint (paths, sizes, mtimes) for the dump status.
     pub fingerprint: Option<String>,
+    /// Which volume this is (`volume_identity`), for the dump status.
+    pub identity: Option<String>,
 }
 
 impl Card {
@@ -105,6 +107,58 @@ pub fn volumes(roots: &[PathBuf]) -> Vec<Volume> {
         }));
     }
     out
+}
+
+/// The identity of a volume, so the dump status can tell "this card was ingested here"
+/// from "these files match a mag" (a card image and the card it was made from hold the
+/// same files): for a device, its kind (image = loop device, or a real disk), the
+/// filesystem UUID (lsblk) and the size; for a folder (`--scan-root`), its path.
+pub fn volume_identity(v: &Volume) -> String {
+    if !v.device.starts_with("/dev/") {
+        let p = std::fs::canonicalize(&v.mount).unwrap_or_else(|_| v.mount.clone());
+        return format!("folder:{}", p.display());
+    }
+    let dev = std::fs::canonicalize(&v.device).unwrap_or_else(|_| PathBuf::from(&v.device));
+    let name = dev.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let kind = if name.starts_with("loop") { "image" } else { "disk" };
+    let size = std::fs::read_to_string(format!("/sys/class/block/{name}/size"))
+        .ok()
+        .and_then(|t| t.trim().parse::<u64>().ok())
+        .map(|sectors| sectors * 512)
+        .unwrap_or(0);
+    let uuid = std::process::Command::new("lsblk")
+        .args(["-n", "-d", "-o", "UUID"])
+        .arg(&dev)
+        .env("LC_ALL", "C")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|u| !u.is_empty() && !u.contains(char::is_whitespace))
+        .unwrap_or_else(|| "-".into());
+    format!("{kind}:{uuid}:{size}")
+}
+
+/// Identity of the volume a source path is on (the mounted volume that contains it,
+/// longest mount first; a folder that is no volume: its own path).
+pub fn identity_of_path(src: &Path, roots: &[PathBuf]) -> String {
+    let src_c = std::fs::canonicalize(src).unwrap_or_else(|_| src.to_path_buf());
+    let mut vols = volumes(roots);
+    if !roots.is_empty() {
+        vols.extend(volumes(&[]));
+    }
+    vols.sort_by_key(|v| std::cmp::Reverse(v.mount.as_os_str().len()));
+    match vols.iter().find(|v| {
+        let m = std::fs::canonicalize(&v.mount).unwrap_or_else(|_| v.mount.clone());
+        // A scan-root folder is a volume only when it is the source itself.
+        if v.device.starts_with("/dev/") { src_c.starts_with(&m) } else { src_c == m }
+    }) {
+        Some(v) if v.device.starts_with("/dev/") && std::fs::canonicalize(&v.mount).ok().as_deref() != Some(src_c.as_path()) => {
+            // The source is a folder inside a mounted volume (not the card root): its path.
+            format!("folder:{}", src_c.display())
+        }
+        Some(v) => volume_identity(v),
+        None => format!("folder:{}", src_c.display()),
+    }
 }
 
 fn unescape_mount(s: &str) -> String {
@@ -350,6 +404,7 @@ pub fn find_cards(vols: &[Volume], cams: &[CameraProfile]) -> Vec<Card> {
             bytes: 0,
             problem: None,
             fingerprint: None,
+            identity: Some(volume_identity(&v)),
         };
         match probe::probe(&v.mount, false) {
             Ok(p) => {

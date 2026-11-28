@@ -79,7 +79,9 @@ const MAGVAULT_CONF: &str = "format: magvault/1\n\
 log_retention_days: 30\n\
 default_profile_320p: default-320p\n\
 # DEBUG lines in the daily logs (yes|no); --verbose / --debug turn it on for one run.\n\
-debug: no\n";
+debug: no\n\
+# ffprobe when it is not on PATH (non-interactive sessions, services):\n\
+# ffprobe: /usr/bin/ffprobe\n";
 
 const CLIENT_MAGVAULT_CONF: &str = "format: magvault/1\n\
 # Client settings.\n\
@@ -91,7 +93,9 @@ committer_wait: 120\n\
 staging_autoclean: yes\n\
 # What the operator sees (stored values stay ISO / UTC).\n\
 date_format: DD/MM/YYYY\n\
-time_format: 24h\n";
+time_format: 24h\n\
+# ffprobe when it is not on PATH (non-interactive sessions, services):\n\
+# ffprobe: /usr/bin/ffprobe\n";
 
 pub fn run(dir: &Path, root: Option<&Path>, write_pointer: bool) -> Result<Done> {
     let dir = if dir.is_absolute() { dir.to_path_buf() } else { std::env::current_dir()?.join(dir) };

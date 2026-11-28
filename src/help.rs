@@ -83,6 +83,9 @@ FLAGS
                          ingested with a warning; the mismatch is logged to the project)
   --mixed-ok             accept a card whose clips name more than one camera (otherwise
                          ingest asks, and --yes refuses)
+  --force                (client) ingest a card this client already dumped again, as a new
+                         mag (otherwise ingest warns \"already dumped\" and asks; --yes
+                         refuses)
   --yes, -y              accept the guesses and the single detected card; no prompts
   --scan-root <dir>      look for cards in the folders of <dir> instead of mounts (repeatable)
 

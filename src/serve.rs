@@ -181,6 +181,10 @@ pub fn run(cfg: &Config, once: bool) -> Result<()> {
             spool.display()
         );
         log.info("system", "serve started (client commits)");
+        if !crate::probe::ffprobe_available() {
+            log.warn("system", crate::probe::FFPROBE_MISSING);
+            crate::say!("WARNING: {}", crate::probe::FFPROBE_MISSING);
+        }
     }
     loop {
         export_projects(&db, &results)?;

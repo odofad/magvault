@@ -664,12 +664,48 @@ pub fn classify_disks(text: &str, allow_loop: bool, is_camera: &dyn Fn(&Path) ->
             .find(|l| !l.is_empty())
             .cloned()
             .unwrap_or_default();
+        // A member of a prepared field set (ext4 labelled `<SET>_M` / `<SET>_S` by Prepare)
+        // whose list cannot be read is never offered for Prepare: unmounted, it is simply a
+        // set that is not mounted; mounted without its list, it needs a look first.
+        if backup.is_none() {
+            let member = family
+                .iter()
+                .filter(|c| c.get("FSTYPE").map(String::as_str) == Some("ext4"))
+                .filter_map(|c| c.get("LABEL"))
+                .find_map(|l| set_member_label(l));
+            if let Some((set, role)) = member {
+                let why = if mounts.is_empty() {
+                    format!(
+                        "{path} is the {} of field set {set}: set not mounted. Mount it (both drives for sync and Clean); a set drive is never offered for Prepare",
+                        role.as_str()
+                    )
+                } else {
+                    format!(
+                        "{path} is labelled as the {} of field set {set} but has no readable {FILE}; check it before anything else (to reuse it, wipe it first with wipefs, then Prepare)",
+                        role.as_str()
+                    )
+                };
+                out.push(Candidate { disk: Err(why), path });
+                continue;
+            }
+        }
         out.push(Candidate {
             disk: Ok(Disk { path: path.clone(), size, label, model: g("MODEL").trim().to_string(), mounts, backup }),
             path,
         });
     }
     out
+}
+
+/// `FIELD-A_M` → (`FIELD-A`, master): the filesystem label Prepare gives a set drive.
+pub fn set_member_label(l: &str) -> Option<(String, Role)> {
+    let (set, suffix) = l.rsplit_once('_')?;
+    let role = match suffix {
+        "M" => Role::Master,
+        "S" => Role::Slave,
+        _ => return None,
+    };
+    valid_label(set).then(|| (set.to_string(), role))
 }
 
 /// Whole disks lsblk reports (offered and refused), camera cards left out.
@@ -919,6 +955,26 @@ NAME="loop0" PATH="/dev/loop0" SIZE="67108864" TYPE="loop" RM="0" HOTPLUG="0" TR
         assert!(c[3].disk.as_ref().unwrap_err().contains("mounted at /srv/backup (outside /media"));
         let with_loop = classify_disks(t, true, &camera);
         assert_eq!(with_loop.last().unwrap().path, "/dev/loop0");
+    }
+
+    #[test]
+    fn unmounted_set_drive_is_never_offered_for_prepare() {
+        let t = r#"NAME="sdg" PATH="/dev/sdg" SIZE="320072933376" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="ext4" LABEL="TESTSET1_M" MOUNTPOINT="" PKNAME="" MODEL="ST320LM010"
+NAME="sdh" PATH="/dev/sdh" SIZE="500107862016" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="" LABEL="" MOUNTPOINT="" PKNAME="" MODEL="ST500LM021"
+NAME="sdh1" PATH="/dev/sdh1" SIZE="320000000000" TYPE="part" RM="0" HOTPLUG="0" TRAN="" FSTYPE="ext4" LABEL="TESTSET1_S" MOUNTPOINT="" PKNAME="sdh" MODEL=""
+NAME="sdi" PATH="/dev/sdi" SIZE="1000204886016" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="ext4" LABEL="OLD_M" MOUNTPOINT="/media/op/OLD_M" PKNAME="" MODEL="Elements"
+NAME="sdj" PATH="/dev/sdj" SIZE="1000204886016" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="ext4" LABEL="MY_MOVIES" MOUNTPOINT="" PKNAME="" MODEL="Elements"
+NAME="sdk" PATH="/dev/sdk" SIZE="1000204886016" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="exfat" LABEL="CARD_M" MOUNTPOINT="" PKNAME="" MODEL="Elements"
+"#;
+        let c = classify_disks(t, false, &|_: &Path| false);
+        let e = |i: usize| c[i].disk.as_ref().unwrap_err().clone();
+        assert_eq!(e(0), "/dev/sdg is the master of field set TESTSET1: set not mounted. Mount it (both drives for sync and Clean); a set drive is never offered for Prepare");
+        assert!(e(1).starts_with("/dev/sdh is the slave of field set TESTSET1: set not mounted."), "partition label counts");
+        assert!(e(2).contains("labelled as the master of field set OLD but has no readable magvault-backup.txt"), "mounted without its list");
+        assert!(c[3].disk.is_ok(), "an ordinary ext4 label stays preparable");
+        assert!(c[4].disk.is_ok(), "only ext4 set labels count");
+        assert_eq!(set_member_label("FIELD-A_S").map(|(s, r)| (s, r.as_str())), Some(("FIELD-A".into(), "slave")));
+        assert_eq!(set_member_label("lower_M"), None);
     }
 }
 

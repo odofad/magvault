@@ -288,9 +288,36 @@ given; the mag card records `mixed_cameras`. The TUI shows the warning in 2 Card
 before Pull.
 
 **Dump status.** Each ingested mag is recorded in `<config>/dumps.txt` with a fingerprint
-of its card (relative path, size, mtime of every file). A detected card with that
-fingerprint is dumped; copies counted are the server (confirmed), staging and the field
-set (a mounted set is checked; an unmounted one is trusted). Cleaning a set updates it.
+of its card (relative path, size, mtime of every file) and the identity of the volume it
+came from (device: image (loop) or disk, filesystem UUID, size; folder: its path). A
+detected card is dumped only when both match: this client ingested this card. Copies
+counted are the server (confirmed), staging and the field set (a mounted set is checked;
+an unmounted one is trusted); green needs two copies with one on the server. Files that
+match a mag from another volume (a card image and its card, a copied folder) are yellow
+with the note "files match an ingested mag", never green; ledger lines from before the
+identity was kept count the same way. Cleaning a set updates the ledger. `magvault cards`
+on a client prints the status of each card.
+
+**Already dumped.** Ingest of a card that is dumped (or whose files match a mag) warns
+"already dumped: …". `--yes` refuses ("pass --force to do it anyway"; for a card not yet
+safe it points to `magvault sync`); without `--yes` it asks "Ingest it again as a new
+mag?"; the TUI asks in a popup before Pull. When the operator goes ahead (`--force` or
+the TUI yes), the client log and the server log get a WARN line, and the new mag card
+records `reingest_of: <earlier mag>`. Server-side `ingest` has no dump ledger and does not
+check this.
+
+**ffprobe.** Found on PATH, else at `ffprobe:` in magvault.conf (client and server), else
+in /usr/bin, /usr/local/bin, /snap/bin (non-interactive sessions often have a short PATH).
+When it is missing, ingest prints a WARNING, the client log and the server log get a WARN
+line, `serve` warns at start, and the TUI shows it in 2 Card: frame rate, resolution, GOP
+and clip times are not read and requirements cannot be checked.
+
+**Unmounted field sets.** A drive whose ext4 filesystem carries a set label (`<SET>_M` /
+`<SET>_S`, given by Prepare) is never offered for Prepare unless it is mounted with its
+`magvault-backup.txt`: unmounted, `usb status`, the TUI and the Prepare popup show "is the
+master of field set X: set not mounted"; mounted without a readable list, it is refused
+with "check it before anything else". The root helper refuses to format an unmounted set
+drive too. Drives that were never a set are offered as before.
 
 ### Client → server
 

@@ -616,7 +616,7 @@ On the card detect screen, each card shows whether it has already been dumped:
 - Yellow: dumped, but not yet two copies and uploaded to the server.
 - Green: two copies exist and the mag is uploaded to the server.
 
-Status comes from hashes / mag identity, not from the volume label. Phase 1: the client records each mag it ingests with a fingerprint of its card (relative path, size and mtime of every file) in `<config>/dumps.txt`; a detected card with the same fingerprint is dumped. Copies counted: server (confirmed), staging, field set.
+Status comes from hashes / mag identity, not from the volume label. Phase 1: the client records each mag it ingests with a fingerprint of its card (relative path, size and mtime of every file) in `<config>/dumps.txt`; a detected card with the same fingerprint is dumped. Copies counted: server (confirmed), staging, field set. A card counts as dumped only when its volume identity matches too (this client ingested this card); files that match a mag ingested from another volume (a card image, a copy) are yellow with a note, never green. Ingesting a dumped card again warns "already dumped"; `--yes` refuses unless `--force`, and the re-ingest is logged.
 
 ## Help and log keys
 
@@ -668,7 +668,7 @@ This is field USB only. It is not related to zmag primary/backup roles.
 **USB drive diagnostics and prepare**
 
 - Only a Magvault-prepared drive (has valid `magvault-backup.txt` at root) can be selected as a backup target.
-- Any other drive is shown as “not valid”.
+- Any other drive is shown as “not valid”, except a drive of a prepared set that is simply not mounted (ext4 labelled `<SET>_M` / `<SET>_S`): it is shown as “set not mounted” and is never offered for Prepare.
 - Not-valid drives offer a **Prepare** action. Prepare opens a popup. It is not inline on the main ingest screen.
 - USB hard disks are valid Prepare targets even when the kernel reports them non-removable (`RM=0`). Detect them by USB transport (`TRAN=usb`).
 - Camera cards and card-reader devices (for example `mmcblk`) are not Prepare targets. `usb status` must not offer Prepare on them.

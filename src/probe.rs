@@ -223,13 +223,49 @@ pub fn classify(files: &mut [ProbedFile]) -> Vec<Clip> {
     clips
 }
 
-pub fn ffprobe_available() -> bool {
-    Command::new("ffprobe").arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+static FFPROBE_CONF: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+static FFPROBE: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+
+/// `ffprobe: <path>` from magvault.conf (set once at config load, before any probe).
+pub fn configure_ffprobe(path: Option<&str>) {
+    if let Some(p) = path.map(str::trim).filter(|p| !p.is_empty()) {
+        let _ = FFPROBE_CONF.set(PathBuf::from(p));
+    }
 }
+
+fn runs(p: &Path) -> bool {
+    Command::new(p).arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Where ffprobe is: `ffprobe` on PATH, else the `ffprobe:` path from magvault.conf, else
+/// the usual install places (non-interactive sessions often have a short PATH).
+pub fn ffprobe_path() -> Option<PathBuf> {
+    FFPROBE
+        .get_or_init(|| {
+            let on_path = std::env::var_os("PATH")
+                .map(|p| std::env::split_paths(&p).map(|d| d.join("ffprobe")).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let mut tries: Vec<PathBuf> = on_path.into_iter().filter(|p| p.is_file()).collect();
+            tries.extend(FFPROBE_CONF.get().cloned());
+            tries.extend(["/usr/bin/ffprobe", "/usr/local/bin/ffprobe", "/snap/bin/ffprobe"].map(PathBuf::from));
+            tries.into_iter().find(|p| runs(p))
+        })
+        .clone()
+}
+
+pub fn ffprobe_available() -> bool {
+    ffprobe_path().is_some()
+}
+
+/// Shown on screen and logged when ffprobe cannot be found.
+pub const FFPROBE_MISSING: &str = "ffprobe not found (not on PATH, no `ffprobe:` in magvault.conf, not in /usr/bin, /usr/local/bin, /snap/bin): frame rate, resolution, GOP and clip times are not read; project requirements cannot be checked";
 
 /// Run ffprobe on one file. Failures are recorded, not fatal (RAW formats may be unknown).
 pub fn ffprobe(path: &Path) -> MediaInfo {
-    let out = Command::new("ffprobe")
+    let Some(bin) = ffprobe_path() else {
+        return MediaInfo { probe_error: Some(FFPROBE_MISSING.to_string()), ..Default::default() };
+    };
+    let out = Command::new(bin)
         .args([
             "-v",
             "error",

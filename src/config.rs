@@ -166,6 +166,7 @@ pub fn load(dir: &Path) -> Result<Config> {
         let text = std::fs::read_to_string(&mv_conf).ctx(format!("cannot read {}", mv_conf.display()))?;
         settings.extend(textfile::parse_config(&text));
     }
+    crate::probe::configure_ffprobe(settings.get("ffprobe").map(String::as_str));
     Ok(Config { dir, paths, settings })
 }
 
@@ -353,6 +354,7 @@ pub fn load_client(dir: &Path) -> Result<ClientConfig> {
         settings.extend(textfile::parse_config(&text));
     }
     let debug = debug_setting(&settings, &mv_conf)?;
+    crate::probe::configure_ffprobe(settings.get("ffprobe").map(String::as_str));
     let committer_wait = match settings.get("committer_wait").map(|s| s.trim()).filter(|s| !s.is_empty()) {
         None => DEFAULT_COMMITTER_WAIT,
         Some(v) => v.parse().map_err(|_| {

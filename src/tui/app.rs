@@ -156,6 +156,8 @@ pub enum Popup {
     Requirements { name: String, row: usize, req: Requirements },
     /// The card's clips name more than one camera: pull only after a deliberate yes.
     Mixed { args: Box<ClientArgs>, models: Vec<String> },
+    /// The card is already dumped (or its files match a mag): pull again only after a yes.
+    Redump { args: Box<ClientArgs>, text: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -389,6 +391,9 @@ impl App {
                 if !p.mixed.is_empty() {
                     self.log(format!("mixed cameras   {} (one mag is one camera)", p.mixed.join(", ")));
                 }
+                if !p.ffprobe {
+                    self.log("WARNING         ffprobe not found: frame rate, resolution, GOP and clip times not read".into());
+                }
             }
             Err(e) => self.log(format!("probe failed    {e}")),
         }
@@ -436,6 +441,31 @@ impl App {
                 .map(|(id, name)| ProjectSel::Existing { id: id.clone(), name: name.clone() }),
         );
         v
+    }
+
+    /// "already dumped" text when the chosen card was dumped here, or its files match a mag.
+    pub fn dumped_note(&self) -> Option<String> {
+        use crate::staging::DumpStatus;
+        let src = self.source.as_ref()?;
+        let i = self.snap.cards.iter().position(|c| &c.volume.mount == src)?;
+        match self.snap.dump.get(i)? {
+            DumpStatus::NotDumped => None,
+            d @ (DumpStatus::Safe { .. } | DumpStatus::Dumped { .. }) => Some(format!("Already dumped: this card was ingested here ({}).", d.text())),
+            DumpStatus::Matches { .. } => Some("Already dumped: the files on this card match a mag ingested here from another volume (an image or copy of this card).".into()),
+        }
+    }
+
+    fn pull_or_ask_mixed(&mut self, a: ClientArgs) -> Option<Action> {
+        let mixed = match &self.preview {
+            Some(Ok(p)) => p.mixed.clone(),
+            _ => Vec::new(),
+        };
+        if mixed.is_empty() {
+            Some(Action::Pull(Box::new(a)))
+        } else {
+            self.popup = Some(Popup::Mixed { args: Box::new(a), models: mixed });
+            None
+        }
     }
 
     /// Requirements of the chosen project (empty: none or no project).
@@ -530,6 +560,7 @@ impl App {
                 model: d.model.clone(),
                 yes: true,
                 mixed_ok: false,
+                force: false,
                 requirements,
             },
             via,
@@ -733,18 +764,13 @@ impl App {
                 None
             }
             KeyCode::Char('p') => match self.pull_args() {
-                Ok(a) => {
-                    let mixed = match &self.preview {
-                        Some(Ok(p)) => p.mixed.clone(),
-                        _ => Vec::new(),
-                    };
-                    if mixed.is_empty() {
-                        Some(Action::Pull(Box::new(a)))
-                    } else {
-                        self.popup = Some(Popup::Mixed { args: Box::new(a), models: mixed });
+                Ok(a) => match self.dumped_note() {
+                    Some(text) => {
+                        self.popup = Some(Popup::Redump { args: Box::new(a), text });
                         None
                     }
-                }
+                    None => self.pull_or_ask_mixed(a),
+                },
                 Err(missing) => {
                     self.popup = Some(Popup::Message(vec![
                         "Pull needs:".to_string(),
@@ -994,6 +1020,22 @@ impl App {
         match popup {
             Popup::Message(_) | Popup::Help(_) | Popup::Log => None, // any key closes
             Popup::Password { .. } => None,   // handled in password_key
+            Popup::Redump { args, text } => match k.code {
+                KeyCode::Enter => {
+                    let mut a = *args;
+                    a.base.force = true;
+                    self.log("already dumped  pulled again by the operator (new mag)".into());
+                    self.pull_or_ask_mixed(a)
+                }
+                KeyCode::Esc => {
+                    self.log("pull cancelled  already dumped; nothing copied".into());
+                    None
+                }
+                _ => {
+                    self.popup = Some(Popup::Redump { args, text });
+                    None
+                }
+            },
             Popup::Mixed { args, models } => match k.code {
                 KeyCode::Enter => {
                     let mut a = *args;

@@ -66,6 +66,7 @@ fn card(name: &str) -> Card {
         bytes: 106_800_000,
         problem: None,
         fingerprint: Some("f".repeat(64)),
+        identity: Some(format!("disk:{name}-UUID:64000000000")),
     }
 }
 
@@ -145,6 +146,7 @@ fn preview(path: &Path) -> Preview {
         shoot: Some(("2011-04-30".into(), "earliest file modification time".into())),
         model_hint: Some("ILCE-7M3 (clip sidecar XML)".into()),
         mixed: Vec::new(),
+        ffprobe: true,
     }
 }
 
@@ -613,4 +615,47 @@ fn inline_pull_locks_inputs_and_x_aborts() {
     assert_eq!(app.pane, Pane::Detected, "inputs locked");
     assert!(matches!(press(&mut app, &[ch('x')]).as_slice(), [Action::Cancel]));
     assert!(screen(&app, 120, 36, "pull-aborting").contains("aborting…"));
+}
+
+#[test]
+fn already_dumped_card_asks_before_pull_and_matches_are_yellow() {
+    use crate::staging::DumpStatus;
+    let mut app = in_ingest_with_card();
+    app.snap.dump = vec![DumpStatus::Safe { copies: 2 }];
+    let path = PathBuf::from("/media/op/A7SIII_128");
+    app.set_preview(path, Ok(preview(&PathBuf::new())));
+    press(&mut app, &[key(KeyCode::Right), key(KeyCode::Right), key(KeyCode::Enter), key(KeyCode::Enter)]);
+    assert!(press(&mut app, &[ch('p')]).is_empty(), "never pulled again silently");
+    let s = screen(&app, 150, 42, "redump-popup");
+    assert!(s.contains("Already dumped: this card was ingested here (2 copies · on server)."), "{s}");
+    assert!(press(&mut app, &[key(KeyCode::Esc)]).is_empty());
+    assert!(app.log.iter().any(|l| l.contains("already dumped; nothing copied")));
+    let acts = press(&mut app, &[ch('p'), key(KeyCode::Enter)]);
+    let [Action::Pull(a)] = acts.as_slice() else { panic!("{acts:?}") };
+    assert!(a.base.force, "the TUI yes is the --force");
+    // Files that match a mag from another volume: yellow, with the note; also asks.
+    app.snap.dump = vec![DumpStatus::Matches { folder: F1.into() }];
+    let s = screen(&app, 150, 42, "dump-matches");
+    assert!(s.contains("● files match an ingested mag"), "{s}");
+    assert!(s.contains("The files match a mag ingested here from another"), "{s}");
+    assert!(press(&mut app, &[ch('p')]).is_empty());
+    assert!(matches!(&app.popup, Some(Popup::Redump { text, .. }) if text.contains("from another volume")));
+    let mut t = Terminal::new(TestBackend::new(150, 42)).unwrap();
+    app.popup = None;
+    t.draw(|f| view::draw(f, &app)).unwrap();
+    let buf = t.backend().buffer();
+    let dot = (0..42).flat_map(|y| (0..34).map(move |x| (x, y))).map(|p| buf.cell(p).unwrap()).find(|c| c.symbol() == "●").unwrap();
+    assert_eq!(dot.fg, ratatui::style::Color::Yellow, "never green on a match from another volume");
+}
+
+#[test]
+fn missing_ffprobe_is_said_on_screen() {
+    let mut app = in_ingest_with_card();
+    let path = PathBuf::from("/media/op/A7SIII_128");
+    let mut p = preview(&path);
+    p.ffprobe = false;
+    app.set_preview(path, Ok(p));
+    let s = screen(&app, 150, 42, "no-ffprobe");
+    assert!(s.contains("⚠ ffprobe not found: frame rate, resolution, GOP and") && s.contains("set ffprobe: in"), "{s}");
+    assert!(app.log.iter().any(|l| l.contains("ffprobe not found")));
 }

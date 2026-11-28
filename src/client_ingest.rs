@@ -61,6 +61,46 @@ pub struct ClientArgs {
     pub scan_roots: Vec<PathBuf>,
 }
 
+/// A card this client already dumped is never ingested again silently (a second mag of the
+/// same files). Warns "already dumped"; `--yes` refuses unless `--force`; interactive use
+/// asks. Returns the earlier mag when the operator goes ahead (logged, and recorded on the
+/// new mag card as `reingest_of`).
+pub fn confirm_not_dumped(cc: &ClientConfig, a: &Args, log: &Log, fingerprint: &str, identity: &str, roots: &[PathBuf]) -> Result<Option<String>> {
+    use crate::staging::{self, DumpStatus};
+    let ledger = staging::dumps(cc);
+    let sets = fieldset::sets(&fieldset::drives(roots));
+    let status = staging::card_status(&ledger, Some(fingerprint), Some(identity), &cc.staging, &sets);
+    let Some(earlier) = staging::matched_folder(&ledger, fingerprint, identity) else { return Ok(None) };
+    let (msg, hint) = match &status {
+        DumpStatus::NotDumped => return Ok(None),
+        DumpStatus::Safe { .. } => (format!("already dumped: this card was ingested here as mag {earlier} ({})", status.text()), String::new()),
+        DumpStatus::Dumped { .. } => (
+            format!("already dumped: this card was ingested here as mag {earlier} ({})", status.text()),
+            " To finish the first copy, run `magvault sync` instead.".to_string(),
+        ),
+        DumpStatus::Matches { .. } => (
+            format!("already dumped: the files on this card match mag {earlier}, ingested from another volume (an image or copy of this card)"),
+            String::new(),
+        ),
+    };
+    crate::say!("WARNING: {msg}.");
+    let note = format!("re-ingest of an already dumped card (earlier mag {earlier})");
+    if a.force {
+        log.warn("ingest", &format!("{note}: forced (--force, or confirmed in the TUI)"));
+        client::queue_issue(Level::Warn, &format!("{note}: forced (--force, or confirmed in the TUI)"));
+        return Ok(Some(earlier));
+    }
+    if a.yes {
+        crate::bail!("{msg}. Nothing copied. Ingesting again makes a second mag of the same files; pass --force to do it anyway.{hint}");
+    }
+    if !util::confirm("Ingest it again as a new mag?")? {
+        crate::bail!("cancelled (already dumped); nothing was written");
+    }
+    log.warn("ingest", &format!("{note}: confirmed by the operator"));
+    client::queue_issue(Level::Warn, &format!("{note}: confirmed by the operator"));
+    Ok(Some(earlier))
+}
+
 /// Extra free space kept on client targets (staging, field drives).
 const MARGIN: u64 = 16 << 20;
 
@@ -110,6 +150,10 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
 
     let cams = ingest::load_cameras_logged(&cc.cameras, &log);
     let probe = ingest::probe_source(&src)?;
+    if !crate::probe::ffprobe_available() {
+        log.warn("ingest", crate::probe::FFPROBE_MISSING);
+        crate::client::queue_issue(Level::Warn, crate::probe::FFPROBE_MISSING);
+    }
     let d = ingest::choose_details(&a.base, &probe, &cams, &src)?;
     let t_online = if online { transport.as_ref() } else { None };
     let known = client::projects(cc, t_online);
@@ -175,11 +219,14 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
     extra.extend(cam_note);
     ingest::print_summary(&src, &probe, &a.base, &d, &project, &extra);
     ingest::confirm_mixed(&a.base, &d)?;
+    let fingerprint = crate::staging::probe_fingerprint(&probe.files);
+    let identity = crate::discover::identity_of_path(&src, &a.scan_roots);
+    let reingest = confirm_not_dumped(cc, &a.base, &log, &fingerprint, &identity, &a.scan_roots)?;
     if !a.base.yes && !util::confirm("Pull (verified copy) with these values?")? {
         crate::bail!("cancelled; nothing was written");
     }
-    let extras = ingest::CardExtras::new(&d, &project, &check);
-    let fingerprint = crate::staging::probe_fingerprint(&probe.files);
+    let mut extras = ingest::CardExtras::new(&d, &project, &check);
+    extras.reingest_of = reingest;
 
     interrupt::install();
     client::remember_local_project(cc, &project)?;
@@ -236,7 +283,7 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
             Via::Direct => {}
         }
         if local.is_some() {
-            crate::staging::record_dump(cc, &fingerprint, &folder, set.as_ref().map(|s| s.label.as_str()));
+            crate::staging::record_dump(cc, &fingerprint, &identity, &folder, set.as_ref().map(|s| s.label.as_str()));
         }
         if !check.ok() {
             let msg = format!("project {}: {} Mag {folder}: {}", project.name(), crate::cardinfo::WARNING, check.line());
@@ -266,7 +313,7 @@ pub fn run(cc: &ClientConfig, mut a: ClientArgs) -> Result<String> {
                         fieldset::mark_synced(s, &folder)?;
                     }
                     if local.is_none() {
-                        crate::staging::record_dump(cc, &fingerprint, &folder, None);
+                        crate::staging::record_dump(cc, &fingerprint, &identity, &folder, None);
                     }
                     crate::staging::record_server(cc, &folder, set.as_ref().map(|s| s.label.as_str()));
                     if a.via == Via::Staging {

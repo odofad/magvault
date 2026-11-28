@@ -102,7 +102,7 @@ grep -q "A7SIII_128  ·  Sony XAVC (PRIVATE/M4ROOT)  ·  Sony A7S III \[sony-a7s
 grep -q "C300  ·  Canon XF (CONTENTS/CLIPS001)" <<<"$out" || fail "Canon card"
 grep -q "GENERIC_64  ·  Generic DCIM" <<<"$out" || fail "generic DCIM card"
 grep -q Documents <<<"$out" && fail "a non-card folder was listed"
-[ "$(wc -l <<<"$out")" = 3 ] || fail "expected 3 cards"
+[ "$(grep -c "^ *[0-9]  " <<<"$out")" = 3 ] && [ "$(grep -c "    dump: not dumped \[red\]" <<<"$out")" = 3 ] || { echo "$out"; fail "expected 3 cards, each not dumped (red)"; }
 pass "Sony, Canon XF and generic DCIM detected with camera guess; non-card folder ignored"
 expect_fail "several cards and --yes: operator must pick" "pass the path" mc ingest --scan-root "$MNT" --project Field --yes </dev/null
 
@@ -167,7 +167,7 @@ grep -q "server  committed" "$W/i1.out" || { cat "$W/i1.out" "$W/i1.err"; fail "
 grep -q "  staging kept" "$W/i1.out" || { cat "$W/i1.out"; fail "staging state not reported"; }
 grep -q "local staging copy kept: on the server; kept in staging until a second backup exists" "$W/i1.err" || { cat "$W/i1.err"; fail "kept reason"; }
 grep -qx "$F1" "$CLI/staging/.magvault/synced" || fail "staged mag not marked on the server"
-grep -q "^[0-9a-f]\{64\} | $F1 | server | -$" "$CCFG/dumps.txt" || { cat "$CCFG/dumps.txt"; fail "dump ledger"; }
+grep -q "^[0-9a-f]\{64\} | $F1 | server | - | folder:$(realpath "$ONE")/A7SIII_128$" "$CCFG/dumps.txt" || { cat "$CCFG/dumps.txt"; fail "dump ledger (with the volume identity)"; }
 [ "$(sql "select status, ingested_by like '%@%' from mags where folder='$F1'")" = "online|1" ] || fail "server DB row"
 [ "$(sql "select count(*) from encoder_jobs e join mags m on m.id=e.mag_id where m.folder='$F1' and e.status='queued'")" = 1 ] || fail "320p job"
 [ "$(sql "select count(*) from encoder_job_clips jc join encoder_jobs e on e.id=jc.job_id join mags m on m.id=e.mag_id where m.folder='$F1'")" = "$(sql "select count(*) from clips c join mags m on m.id=c.mag_id where m.folder='$F1'")" ] || fail "client mag: job clip links"
@@ -176,6 +176,26 @@ grep -q "INFO   ingest    Mag $F1 committed from client dit-a" "$SRV"/logs/*.log
 grep -q "Mag $F1 committed on the server" "$CLI"/logs/*.log || fail "client log"
 [ -z "$(ls -A "$SRV/mags/.incoming/.clients/dit-a" | grep -v "^\.client-log")" ] || fail "spool not empty after commit"
 pass "card picked by discovery (no TTY), staged, verified, committed by serve (job linked to clips), staging kept until a second backup, logged on both sides"
+
+echo "== already dumped: --yes refuses, --force re-ingests and logs it; a copy of the card is yellow, never green"
+grep -q "dump: 2 copies · on server \[green\]" <<<"$(mc cards --scan-root "$ONE")" || { mc cards --scan-root "$ONE"; fail "dumped card not green"; }
+expect_fail "--yes refuses a card this client already dumped" "already dumped: this card was ingested here as mag $F1 (2 copies · on server). Nothing copied. Ingesting again makes a second mag of the same files; pass --force" \
+  mc ingest "$CARD" "${ING[@]}"
+expect_fail "already dumped: no TTY, no --yes: asked, not copied" "confirmation needed" mc ingest "$CARD" --project Field --camera sony-a7siii --shoot-date 2026-11-20 </dev/null
+[ "$(ls "$CLI/staging" | grep -cE '^[0-9]{8}_')" = 1 ] || fail "a refused re-ingest copied something"
+mkdir -p "$W/copy" && cp -a "$CARD" "$W/copy/A7SIII_COPY"
+cards=$(mc cards --scan-root "$W/copy")
+grep -q "dump: files match an ingested mag \[yellow\] (mag $F1, from another volume)" <<<"$cards" || { echo "$cards"; fail "a copy of the card must be yellow with the note"; }
+expect_fail "--yes refuses a card whose files match a mag from another volume" "the files on this card match mag $F1, ingested from another volume" \
+  mc ingest "$W/copy/A7SIII_COPY" "${ING[@]}"
+ING+=(--force)
+mc ingest "$CARD" "${ING[@]}" --no-sync > "$W/i1b.out" 2>"$W/i1b.err" || { cat "$W/i1b.err"; fail "--force re-ingest"; }
+F1B=$(awk '/^ingested /{print $2}' "$W/i1b.out")
+grep -q "WARNING: already dumped: this card was ingested here as mag $F1" "$W/i1b.err" || { cat "$W/i1b.err"; fail "forced re-ingest without the warning"; }
+grep -q "WARN   ingest    re-ingest of an already dumped card (earlier mag $F1): forced" "$CLI"/logs/*.log || fail "forced re-ingest not logged"
+grep -qx "reingest_of: $F1" "$CLI/staging/$F1B/magcard.txt" || fail "reingest_of not on the new mag card"
+mc sync >/dev/null 2>&1 || fail "sync forced re-ingest"
+pass "already dumped: green card refused with --yes (and asked without), copy of the card yellow with the note and refused, --force re-ingests with a warning, a log line and reingest_of"
 
 echo "== TUI (a bot at the keyboard in a pseudo-terminal): dashboard → Ingest → pull → back"
 cat > "$W/tui1.script" <<'TUI'
@@ -194,6 +214,9 @@ wait New project  TuiTest
 send \r
 wait TuiTest  (new
 send p
+# The card was dumped here before: the TUI asks; Enter pulls again as a new mag.
+wait Already dumped: this card was ingested here
+send \r
 # The copy runs inside the TUI: progress bar with bytes and percent, no raw terminal.
 wait Pull A7SIII_128
 wait copying
@@ -208,7 +231,8 @@ FAKE_RSYNC_FILE_DELAY=0.6 python3 "$REPO/tests/tui_pty.py" "$W/tui1.script" -- "
 TF=$(sql "select m.folder from mags m join projects p on p.id=m.project_id where p.name='TuiTest'")
 [ -n "$TF" ] && [ -d "$SRV/mags/$TF" ] && [ -d "$CLI/staging/$TF" ] || fail "TUI pull did not commit through the client ingest path"
 grep -q "Mag $TF committed on the server" "$CLI"/logs/*.log || fail "TUI pull not in the client log"
-pass "TUI: card picked with Enter, card summary (no file list), new project, p pulls inside the TUI with a progress bar (committed, staging kept), Esc, q"
+grep -q "re-ingest of an already dumped card (earlier mag .*): forced (--force, or confirmed in the TUI)" "$CLI"/logs/*.log || fail "TUI re-pull not logged"
+pass "TUI: card picked with Enter, card summary (no file list), new project, already dumped asked, p pulls inside the TUI with a progress bar (committed, staging kept), Esc, q"
 cat > "$W/tui2.script" <<'TUI'
 wait 1 Modules
 send i
@@ -382,13 +406,18 @@ NAME="mmcblk9" PATH="/dev/full" SIZE="127865454592" TYPE="disk" RM="0" HOTPLUG="
 NAME="mmcblk9p1" PATH="/dev/full1" SIZE="127861260288" TYPE="part" RM="0" HOTPLUG="1" TRAN="" FSTYPE="exfat" LABEL="" MOUNTPOINT="/run/media/op/disk" PKNAME="mmcblk9" MODEL=""
 NAME="sdx" PATH="/dev/urandom" SIZE="63864569856" TYPE="disk" RM="1" HOTPLUG="1" TRAN="usb" FSTYPE="exfat" LABEL="EOS" MOUNTPOINT="/media/op/EOS" PKNAME="" MODEL="SD/MMC Reader"
 NAME="sdw" PATH="/dev/random" SIZE="500107862016" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="" LABEL="" MOUNTPOINT="" PKNAME="" MODEL="ST500LM021"
+NAME="sdv" PATH="/dev/null" SIZE="320072933376" TYPE="disk" RM="0" HOTPLUG="0" TRAN="usb" FSTYPE="ext4" LABEL="TESTSET1_M" MOUNTPOINT="" PKNAME="" MODEL="ST320LM010"
 LSBLK
 fl() { PATH="$REPO/tests/fake-lsblk:$PATH" FAKE_LSBLK_FILE="$W/lsblk.txt" "$@"; }
 st=$(fl mc usb status)
 grep -q "^USB drive /dev/zero has an existing ZFS signature; wipe it first (wipefs), then Prepare$" <<<"$st" || { echo "$st"; fail "status: ZFS disk reason"; }
 grep -q "^USB drive /dev/random .*not valid  ·  \[usb prepare\]" <<<"$st" || { echo "$st"; fail "status: clean USB disk (RM=0, TRAN=usb) not offered"; }
 grep -qE "/dev/full|mmcblk|/dev/urandom|EOS" <<<"$st" && { echo "$st"; fail "status offers a camera card / card reader"; }
-pass "usb status: ZFS disk shown with the fix, USB disk with RM=0 offered, SD slot and card reader not listed"
+grep -q "^USB drive /dev/null is the master of field set TESTSET1: set not mounted. Mount it (both drives for sync and Clean); a set drive is never offered for Prepare$" <<<"$st" || { echo "$st"; fail "status: unmounted set drive"; }
+grep -q "/dev/null.*\[usb prepare\]" <<<"$st" && { echo "$st"; fail "unmounted set drive offered for Prepare"; }
+pass "usb status: ZFS disk shown with the fix, USB disk with RM=0 offered, unmounted set drive shown as set not mounted (no Prepare), SD slot and card reader not listed"
+expect_fail "prepare-master refuses an unmounted set drive" "/dev/null is the master of field set TESTSET1: set not mounted" \
+  fl mc usb prepare-master --device /dev/null --label NOPE --yes
 expect_fail "prepare-master refuses a ZFS-signature disk with the fix (before sudo)" "/dev/zero has an existing ZFS signature; wipe it first (wipefs), then Prepare" \
   fl mc usb prepare-master --device /dev/zero --label NOPE --yes
 expect_fail "prepare-master refuses the SD card slot" "camera cards and SD slots are never prepared" \
@@ -446,10 +475,10 @@ cp "$CCFG/cameras/sony-a7siii.cam" "$CCFG/cameras/sony-local.cam"
 sed -i 's/^id: sony-a7siii/id: sony-local/; s/^name: .*/name: Sony Local Only/' "$CCFG/cameras/sony-local.cam"
 before=$(ls "$CLI/staging" | grep -cE '^[0-9]{8}_' || true)
 expect_fail "ingest refused before copying when the server lacks the profile" "camera profile \"sony-local\" is not on the server" \
-  mc ingest "$CARD" --project Field --camera sony-local --shoot-date 2026-11-20 --yes
+  mc ingest "$CARD" --project Field --camera sony-local --shoot-date 2026-11-20 --yes --force
 [ "$(ls "$CLI/staging" | grep -cE '^[0-9]{8}_' || true)" = "$before" ] || fail "something was copied to staging"
 [ -z "$(ls -A "$SRV/mags/.incoming/.clients/dit-a" | grep -v '^\.client-log' || true)" ] || fail "something was uploaded"
-mc ingest "$CARD" --project Field --camera sony-local --shoot-date 2026-11-20 --yes --no-sync > "$W/i12.out" 2>"$W/i12.err" || { cat "$W/i12.err"; fail "offline ingest with a local-only profile"; }
+mc ingest "$CARD" --project Field --camera sony-local --shoot-date 2026-11-20 --yes --force --no-sync > "$W/i12.out" 2>"$W/i12.err" || { cat "$W/i12.err"; fail "offline ingest with a local-only profile"; }
 grep -q "does not accept this mag: camera profile \"sony-local\" is not on the server" "$W/i12.err" || { cat "$W/i12.err"; fail "offline warning (cached server list)"; }
 F12=$(awk '/^ingested /{print $2}' "$W/i12.out")
 set +e; mc sync > "$W/s6.out" 2>&1; rc=$?; set -e
@@ -476,12 +505,12 @@ expect_fail "an existing project keeps its requirements" "already exists with re
 grep -q "ReqTest  requires 25 fps · HD · intra  · 1 warning(s) in the project log" <<<"$(ms projects)" || { ms projects; fail "server projects"; }
 sleep 2.5   # serve publishes requirements every 2 s
 grep -q "ReqTest  requires 25 fps · HD · intra" <<<"$(mc projects)" || { mc projects; fail "client projects: requirements from the server"; }
-out=$(mc ingest "$CARD" --project ReqTest --camera sony-a7siii --shoot-date 2026-11-20 --yes 2>&1) || { echo "$out"; fail "client ingest into a project with requirements"; }
+out=$(mc ingest "$CARD" --project ReqTest --camera sony-a7siii --shoot-date 2026-11-20 --yes --force 2>&1) || { echo "$out"; fail "client ingest into a project with requirements"; }
 grep -q "WARNING     Camera footage does not meet project requirements." <<<"$out" || { echo "$out"; fail "client warning"; }
 CRF=$(awk '/^ingested /{print $2}' <<<"$out")
 [ "$(sql "select count(*) from project_log l join projects p on p.id=l.project_id where p.name='ReqTest' and l.message like '%$CRF%'")" = 1 ] || fail "server did not log the client mag to the project"
 grep -q "WARN   project   project ReqTest: Camera footage does not meet project requirements. Mag $CRF" "$CLI"/logs/*.log || fail "client log"
-out=$(mc ingest "$CARD" --project ReqNew --camera sony-a7siii --shoot-date 2026-11-20 --require-resolution SD --yes 2>&1) || { echo "$out"; fail "client new project with requirements"; }
+out=$(mc ingest "$CARD" --project ReqNew --camera sony-a7siii --shoot-date 2026-11-20 --require-resolution SD --yes --force 2>&1) || { echo "$out"; fail "client new project with requirements"; }
 grep -q "card meets the project requirements" <<<"$out" || { echo "$out"; fail "matching card"; }
 [ "$(sql "select requirements from projects where name='ReqNew'")" = "res=SD" ] || fail "client new project created without its requirements"
 pass "requirements: fixed lists, stored at creation (server and client), warning not a hard stop, on the mag card and in the project log (server ingest and client upload)"
@@ -503,7 +532,7 @@ pass "mixed cameras: --yes refuses, without --yes the warning comes before the q
 echo "== offline client project: one UUID locally, merged into the server's project"
 ms ingest "$CARD" --project Night --camera sony-a7siii --shoot-date 2026-11-20 --yes >/dev/null 2>&1 || fail "server ingest Night"
 NIGHT=$(sql "select id from projects where name='Night'")
-NI=(--project Night --camera sony-a7siii --shoot-date 2026-11-20 --yes --no-sync)
+NI=(--project Night --camera sony-a7siii --shoot-date 2026-11-20 --yes --force --no-sync)
 mc ingest "$CARD" "${NI[@]}" > "$W/n1.out" 2>/dev/null || fail "offline Night 1"
 mc ingest "$CARD" "${NI[@]}" > "$W/n2.out" 2>/dev/null || fail "offline Night 2"
 N1=$(awk '/^ingested /{print $2}' "$W/n1.out"); N2=$(awk '/^ingested /{print $2}' "$W/n2.out")

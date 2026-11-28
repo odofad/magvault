@@ -10,9 +10,12 @@
 //! hand, with the same rule unless one mag is named.
 //!
 //! Dump status: every mag ingested on this client is recorded in `<config>/dumps.txt` with
-//! a fingerprint of the card it came from (relative path, size and mtime of every file).
-//! A detected card whose fingerprint matches a recorded mag is "dumped"; it is "safe"
-//! (green) when the mag has two copies and one of them is the server.
+//! a fingerprint of the card it came from (relative path, size and mtime of every file)
+//! and the identity of that volume (`discover::volume_identity`). A detected card is
+//! "dumped" only when both match a recorded mag: this client ingested this card. It is
+//! "safe" (green) when that mag has two copies and one of them is the server. Files that
+//! match a mag ingested from another volume (a card image and its card, a copied folder)
+//! are shown yellow with a note, never green.
 
 use crate::config::ClientConfig;
 use crate::error::{Context, Result};
@@ -189,6 +192,8 @@ pub struct Dump {
     pub server: bool,
     /// Field set label, or None.
     pub set: Option<String>,
+    /// Volume the mag was ingested from (None: recorded before identities were kept).
+    pub identity: Option<String>,
 }
 
 fn dumps_path(cc: &ClientConfig) -> PathBuf {
@@ -201,7 +206,11 @@ pub fn dumps(cc: &ClientConfig) -> Vec<Dump> {
         .lines()
         .filter_map(|l| {
             let p: Vec<&str> = l.split(" | ").collect();
-            let [fp, folder, server, set] = p.as_slice() else { return None };
+            let (fp, folder, server, set, identity) = match p.as_slice() {
+                [fp, folder, server, set] => (fp, folder, server, set, None),
+                [fp, folder, server, set, id] => (fp, folder, server, set, Some(id.to_string()).filter(|i| i != "-")),
+                _ => return None,
+            };
             if !is_mag_folder(folder) || fp.len() != 64 {
                 return None;
             }
@@ -210,6 +219,7 @@ pub fn dumps(cc: &ClientConfig) -> Vec<Dump> {
                 folder: folder.to_string(),
                 server: *server == "server",
                 set: (*set != "-").then(|| set.to_string()),
+                identity,
             })
         })
         .collect()
@@ -220,22 +230,30 @@ fn save_dumps(cc: &ClientConfig, v: &[Dump]) -> Result<()> {
         .iter()
         .map(|d| {
             format!(
-                "{} | {} | {} | {}\n",
+                "{} | {} | {} | {} | {}\n",
                 d.fingerprint,
                 d.folder,
                 if d.server { "server" } else { "-" },
-                d.set.as_deref().unwrap_or("-")
+                d.set.as_deref().unwrap_or("-"),
+                d.identity.as_deref().map(|i| i.replace('|', "/")).unwrap_or_else(|| "-".into())
             )
         })
         .collect();
     atomic_write(&dumps_path(cc), text.as_bytes())
 }
 
-/// A new mag from a card (best effort: the ledger only drives the status colour).
-pub fn record_dump(cc: &ClientConfig, fingerprint: &str, folder: &str, set: Option<&str>) {
+/// A new mag from a card (best effort: the ledger drives the status colour and the
+/// "already dumped" check).
+pub fn record_dump(cc: &ClientConfig, fingerprint: &str, identity: &str, folder: &str, set: Option<&str>) {
     let mut v = dumps(cc);
     v.retain(|d| d.folder != folder);
-    v.push(Dump { fingerprint: fingerprint.into(), folder: folder.into(), server: false, set: set.map(String::from) });
+    v.push(Dump {
+        fingerprint: fingerprint.into(),
+        folder: folder.into(),
+        server: false,
+        set: set.map(String::from),
+        identity: Some(identity.replace('|', "/")),
+    });
     let _ = save_dumps(cc, &v);
 }
 
@@ -269,6 +287,9 @@ pub enum DumpStatus {
     Dumped { copies: usize, server: bool },
     /// Green: two copies and on the server.
     Safe { copies: usize },
+    /// Yellow at most: the files match a mag this client ingested from another volume
+    /// (e.g. an image of this card); this card itself was not ingested here.
+    Matches { folder: String },
 }
 
 impl DumpStatus {
@@ -278,6 +299,7 @@ impl DumpStatus {
             DumpStatus::Dumped { server: false, .. } => "dumped · not yet safe".into(),
             DumpStatus::Dumped { server: true, .. } => "on server · 1 copy only".into(),
             DumpStatus::Safe { copies } => format!("{copies} copies · on server"),
+            DumpStatus::Matches { .. } => "files match an ingested mag".into(),
         }
     }
 }
@@ -301,13 +323,24 @@ pub fn status_of(d: &Dump, staging: &Path, sets: &[FieldSet]) -> DumpStatus {
     }
 }
 
-/// Status of a detected card by its fingerprint.
-pub fn card_status(ledger: &[Dump], fingerprint: Option<&str>, staging: &Path, sets: &[FieldSet]) -> DumpStatus {
+/// Status of a detected card: its fingerprint and its volume identity must both match a
+/// recorded mag for "dumped"; a fingerprint match alone is `Matches` (yellow, with a note).
+pub fn card_status(ledger: &[Dump], fingerprint: Option<&str>, identity: Option<&str>, staging: &Path, sets: &[FieldSet]) -> DumpStatus {
     let Some(fp) = fingerprint else { return DumpStatus::NotDumped };
-    match ledger.iter().rev().find(|d| d.fingerprint == fp) {
-        Some(d) => status_of(d, staging, sets),
+    let same = ledger.iter().rev().filter(|d| d.fingerprint == fp);
+    if let Some(d) = same.clone().find(|d| identity.is_some() && d.identity.as_deref() == identity) {
+        return status_of(d, staging, sets);
+    }
+    match same.into_iter().next() {
+        Some(d) => DumpStatus::Matches { folder: d.folder.clone() },
         None => DumpStatus::NotDumped,
     }
+}
+
+/// The mag a status refers to (None: not dumped).
+pub fn matched_folder(ledger: &[Dump], fingerprint: &str, identity: &str) -> Option<String> {
+    let same: Vec<&Dump> = ledger.iter().rev().filter(|d| d.fingerprint == fingerprint).collect();
+    same.iter().find(|d| d.identity.as_deref() == Some(identity)).or(same.first()).map(|d| d.folder.clone())
 }
 
 #[cfg(test)]
@@ -357,7 +390,7 @@ mod tests {
         let staging = std::env::temp_dir().join(format!("mv-dump-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&staging);
         std::fs::create_dir_all(staging.join(F1)).unwrap();
-        let d = |server, set: Option<&str>, folder: &str| Dump { fingerprint: "f".repeat(64), folder: folder.into(), server, set: set.map(String::from) };
+        let d = |server, set: Option<&str>, folder: &str| Dump { fingerprint: "f".repeat(64), folder: folder.into(), server, set: set.map(String::from), identity: Some("disk:AAAA-1111:64000".into()) };
         // Staging only: yellow, not on the server.
         assert_eq!(status_of(&d(false, None, F1), &staging, &[]), DumpStatus::Dumped { copies: 1, server: false });
         // Staging + server: two copies, one on the server → green.
@@ -366,7 +399,19 @@ mod tests {
         assert_eq!(status_of(&d(true, None, F2), &staging, &[]), DumpStatus::Dumped { copies: 1, server: true });
         // Server + set not mounted (trusted from the ledger): green.
         assert_eq!(status_of(&d(true, Some("FIELD-A"), F2), &staging, &[]), DumpStatus::Safe { copies: 2 });
-        assert_eq!(card_status(&[], Some("x"), &staging, &[]), DumpStatus::NotDumped);
+        assert_eq!(card_status(&[], Some("x"), Some("disk:AAAA-1111:64000"), &staging, &[]), DumpStatus::NotDumped);
+        // Same files, same volume: this card was ingested here → its real status.
+        let ledger = vec![d(true, None, F1)];
+        let fp = "f".repeat(64);
+        assert_eq!(card_status(&ledger, Some(&fp), Some("disk:AAAA-1111:64000"), &staging, &[]), DumpStatus::Safe { copies: 2 });
+        // Same files from another volume (an image of the card, a copy): yellow at most.
+        assert_eq!(card_status(&ledger, Some(&fp), Some("image:AAAA-1111:64000"), &staging, &[]), DumpStatus::Matches { folder: F1.into() });
+        assert_eq!(card_status(&ledger, Some(&fp), None, &staging, &[]), DumpStatus::Matches { folder: F1.into() });
+        // An old ledger line without an identity never gives green.
+        let mut old = d(true, None, F1);
+        old.identity = None;
+        assert_eq!(card_status(&[old], Some(&fp), Some("disk:AAAA-1111:64000"), &staging, &[]), DumpStatus::Matches { folder: F1.into() });
+        assert_eq!(matched_folder(&ledger, &fp, "image:x"), Some(F1.to_string()));
         let _ = std::fs::remove_dir_all(&staging);
     }
 }

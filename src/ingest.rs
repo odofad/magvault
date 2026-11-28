@@ -64,6 +64,8 @@ pub struct Args {
     pub requirements: Option<Requirements>,
     /// `--mixed-ok`: the operator accepts a card whose clips name more than one camera.
     pub mixed_ok: bool,
+    /// `--force`: ingest a card this client already dumped again (a new mag).
+    pub force: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +148,8 @@ pub struct CardExtras {
     pub requirements_warning: Option<String>,
     /// `mixed_cameras`: the operator accepted a card with clips of several cameras.
     pub mixed_cameras: Option<String>,
+    /// `reingest_of`: the card was already dumped as this mag; ingested again on purpose.
+    pub reingest_of: Option<String>,
 }
 
 impl CardExtras {
@@ -158,6 +162,7 @@ impl CardExtras {
             },
             requirements_warning: (!check.ok()).then(|| check.line().replace('|', "/")),
             mixed_cameras: (!d.mixed.is_empty()).then(|| d.mixed.join(", ").replace('|', "/")),
+            reingest_of: None,
         }
     }
 }
@@ -246,9 +251,7 @@ pub fn probe_source(src: &Path) -> Result<Probe> {
     crate::say!("probing {} …", esc(&src.display().to_string()));
     let use_ffprobe = probe::ffprobe_available();
     if !use_ffprobe {
-        crate::say!(
-            "warning: ffprobe not found; media details (duration, fps, size, audio) will be empty"
-        );
+        crate::say!("WARNING: {}", probe::FFPROBE_MISSING);
     }
     let probe = probe::probe(src, use_ffprobe)?;
     if probe.files.is_empty() {
@@ -808,6 +811,7 @@ pub fn write_cards(
         ("mixed_cameras", &extras.mixed_cameras),
         ("project_requirements", &extras.project_requirements),
         ("requirements_warning", &extras.requirements_warning),
+        ("reingest_of", &extras.reingest_of),
     ] {
         if let Some(v) = v {
             card.set(k, v.as_str());
@@ -994,6 +998,9 @@ pub fn run(cfg: &Config, a: Args) -> Result<Outcome> {
     let proxy_profile = resolve_320p_profile(cfg, &encs.profiles)?;
 
     let probe = probe_source(&src)?;
+    if !probe::ffprobe_available() {
+        log.warn("ingest", probe::FFPROBE_MISSING);
+    }
     let d = choose_details(&a, &probe, &cams, &src)?;
     let project = choose_project(&db, &a)?;
     let req = project_requirements(&db, &project)?;

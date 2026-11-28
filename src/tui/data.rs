@@ -120,6 +120,8 @@ pub struct Preview {
     pub model_hint: Option<String>,
     /// Models named by live media when the card holds more than one camera.
     pub mixed: Vec<String>,
+    /// ffprobe was found (frame rate, resolution, GOP and clip times come from it).
+    pub ffprobe: bool,
 }
 
 pub fn gather(cc: &ClientConfig, scan_roots: &[PathBuf]) -> Snapshot {
@@ -141,7 +143,7 @@ pub fn gather(cc: &ClientConfig, scan_roots: &[PathBuf]) -> Snapshot {
     let all_drives = fieldset::drives(scan_roots);
     let sets = fieldset::sets(&all_drives);
     let ledger = staging::dumps(cc);
-    let dump = cards.iter().map(|c| staging::card_status(&ledger, c.fingerprint.as_deref(), &cc.staging, &sets)).collect();
+    let dump = cards.iter().map(|c| staging::card_status(&ledger, c.fingerprint.as_deref(), c.identity.as_deref(), &cc.staging, &sets)).collect();
     let drives = if scan_roots.is_empty() {
         fieldset::candidates()
             .unwrap_or_default()
@@ -189,7 +191,8 @@ fn recent_log(logs: &Path, n: usize) -> Vec<String> {
 
 /// Probe a card for the preview (same probe and guesses as `ingest`, nothing printed).
 pub fn preview(path: &Path, cameras: &[CameraProfile]) -> Result<Preview, String> {
-    let p = probe::probe(path, probe::ffprobe_available()).map_err(|e| e.0)?;
+    let ffprobe = probe::ffprobe_available();
+    let p = probe::probe(path, ffprobe).map_err(|e| e.0)?;
     if p.files.is_empty() {
         return Err(format!("{} contains no files", path.display()));
     }
@@ -198,5 +201,5 @@ pub fn preview(path: &Path, cameras: &[CameraProfile]) -> Result<Preview, String
     let camera = discover::guess_camera(&p, cameras, &hints).map(|c| c.id.clone());
     let model_hint = crate::camera_meta::describe(&hints);
     let shoot = probe::guess_shoot_day(&p).map(|(d, src)| (d, src.to_string()));
-    Ok(Preview { summary: crate::cardinfo::summarize(&p), total: p.total_bytes, camera, shoot, model_hint, mixed })
+    Ok(Preview { summary: crate::cardinfo::summarize(&p), total: p.total_bytes, camera, shoot, model_hint, mixed, ffprobe })
 }

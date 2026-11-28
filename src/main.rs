@@ -61,6 +61,7 @@ const FLAGS: &[&str] = &[
     "--mirror-set",
     "--no-sync",
     "--mixed-ok",
+    "--force",
 ];
 
 fn parse_cli() -> Result<Cli> {
@@ -156,6 +157,7 @@ fn base_args(cli: &mut Cli) -> Result<ingest::Args> {
         model: cli.take("--model"),
         yes: cli.flag(&["--yes", "-y"]),
         mixed_ok: cli.flag(&["--mixed-ok"]),
+        force: cli.flag(&["--force"]),
         requirements,
         source: PathBuf::new(),
     })
@@ -338,13 +340,17 @@ fn run() -> Result<ExitCode> {
         "cards" => {
             let roots = scan_roots(&mut cli);
             cli.reject_unknown(&[])?;
+            let mut client_cfg = None;
             let cams = match config::resolve_dir(cli.config.as_deref()) {
                 Ok(dir) => match config::read_mode(&dir)? {
                     config::Mode::Server => {
                         profiles::load_cameras(&config::load(&dir)?.paths.cameras).profiles
                     }
                     config::Mode::Client => {
-                        profiles::load_cameras(&config::load_client(&dir)?.cameras).profiles
+                        let cc = config::load_client(&dir)?;
+                        let cams = profiles::load_cameras(&cc.cameras).profiles;
+                        client_cfg = Some(cc);
+                        cams
                     }
                 },
                 Err(_) => Vec::new(),
@@ -353,8 +359,29 @@ fn run() -> Result<ExitCode> {
             if cards.is_empty() {
                 println!("no camera card detected");
             }
+            // Client: the dump status of each card (PLAN.md "Card dump status").
+            let dump = client_cfg.as_ref().map(|cc| {
+                let ledger = staging::dumps(cc);
+                let sets = fieldset::sets(&fieldset::drives(&roots));
+                cards
+                    .iter()
+                    .map(|c| staging::card_status(&ledger, c.fingerprint.as_deref(), c.identity.as_deref(), &cc.staging, &sets))
+                    .collect::<Vec<_>>()
+            });
             for (i, c) in cards.iter().enumerate() {
                 println!("{:>2}  {}", i + 1, c.line());
+                if let Some(d) = dump.as_ref().and_then(|v| v.get(i)) {
+                    let colour = match d {
+                        staging::DumpStatus::NotDumped => "red",
+                        staging::DumpStatus::Safe { .. } => "green",
+                        _ => "yellow",
+                    };
+                    let note = match d {
+                        staging::DumpStatus::Matches { folder } => format!(" (mag {folder}, from another volume)"),
+                        _ => String::new(),
+                    };
+                    println!("    dump: {} [{colour}]{note}", d.text());
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -485,7 +512,7 @@ fn client_command_inner(cmd: &str, mut cli: Cli, cc: &config::ClientConfig) -> R
             let via =
                 client_ingest::Via::parse(&cli.take("--via").unwrap_or_else(|| "staging".into()))?;
             let set_label = cli.take("--set");
-            cli.reject_unknown(&["--yes", "-y", "--mirror-set", "--no-sync", "--mixed-ok"])?;
+            cli.reject_unknown(&["--yes", "-y", "--mirror-set", "--no-sync", "--mixed-ok", "--force"])?;
             let cams = profiles::load_cameras(&cc.cameras).profiles;
             base.source = source_or_card(&cli.positional, &cams, &roots, base.yes)?;
             let a = client_ingest::ClientArgs {

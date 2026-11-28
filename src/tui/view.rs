@@ -362,7 +362,7 @@ fn stub(f: &mut Frame, area: Rect, app: &App, s: Stub) {
 fn dump_style(d: &DumpStatus) -> Style {
     match d {
         DumpStatus::NotDumped => Style::default().fg(Color::Red),
-        DumpStatus::Dumped { .. } => Style::default().fg(Color::Yellow),
+        DumpStatus::Dumped { .. } | DumpStatus::Matches { .. } => Style::default().fg(Color::Yellow),
         DumpStatus::Safe { .. } => good(),
     }
 }
@@ -519,9 +519,22 @@ fn ingest(f: &mut Frame, area: Rect, app: &App) {
             l.push(row("GOP", sm.gop_label(), gp));
             l.push(Line::raw(""));
             match chosen_dump(app) {
+                Some(d @ DumpStatus::Matches { folder }) => {
+                    l.push(Line::from(vec![Span::raw(" Dump status  "), Span::styled("● ", dump_style(d)), Span::raw(d.text())]));
+                    let which = if tech { format!("mag {folder}") } else { "a mag".to_string() };
+                    for w in wrap_indent(&format!("The files match {which} ingested here from another volume (an image or copy of this card). This card itself was not dumped here."), card_in, "              ") {
+                        l.push(Line::styled(w, dim()));
+                    }
+                }
                 Some(d) => l.push(Line::from(vec![Span::raw(" Dump status  "), Span::styled("● ", dump_style(d)), Span::raw(d.text())])),
                 None if !app.snap.cards.iter().any(|c| &c.volume.mount == s) => l.push(Line::styled(" Dump status  not checked (typed path)", dim())),
                 None => {}
+            }
+            if !p.ffprobe {
+                l.push(Line::raw(""));
+                for w in wrap_indent("⚠ ffprobe not found: frame rate, resolution, GOP and clip times are not read. Install ffmpeg or set ffprobe: in magvault.conf.", card_in, " ") {
+                    l.push(Line::styled(w, warn()));
+                }
             }
             if !p.mixed.is_empty() {
                 l.push(Line::raw(""));
@@ -892,6 +905,18 @@ fn popup(f: &mut Frame, area: Rect, app: &App, p: &Popup) {
             l.push(Line::styled("  Frame rate 24 25 30 50 60 · Resolution 4K HD SD · GOP intra, long-GOP", dim()));
             l.push(Line::styled("  ←→ change · ↑↓ row · Enter create · Esc cancel", dim()));
             ("New project".into(), l, 80)
+        }
+        Popup::Redump { text, .. } => {
+            let mut l = vec![Line::raw("")];
+            for w in wrap_indent(text, 78, "  ") {
+                l.push(Line::styled(w, warn()));
+            }
+            l.push(Line::raw(""));
+            l.push(Line::raw("  Pulling again makes a second mag of the same files."));
+            l.push(Line::raw(""));
+            l.push(Line::raw("  [ Enter  Pull again as a new mag ]"));
+            l.push(Line::styled("  Esc  Cancel · nothing is copied", dim()));
+            ("Already dumped".into(), l, 84)
         }
         Popup::Mixed { models, args } => {
             let cam = args.base.camera.clone().unwrap_or_default();
