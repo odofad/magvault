@@ -1253,6 +1253,15 @@ Full rationale and the complete specification are in `docs/technical-review-and-
 - Reconnect-and-sync, pending-sync safety.
 - Server confirmation + autoclean (after two backups).
 
+
+### Phase 2 decisions
+
+- Encode runs on the server GPU only. Clients do not encode.
+- Telemetry on day one: queue depth, disk free, serve heartbeat.
+- Job card offline: never refuse. Operator may set up a custom project and dump local-only to a drive until the server is reachable. Offline custom-project behaviour still needs a design pass.
+- A producer key can create a project and edit requirements on an existing project.
+- Key manager in Phase 2 is a TUI, not CLI-only.
+
 ### Phase 2 – Proxies, encoder, dashboards, projects, keys
 - 320p encode worker and rules. Jobs queued in Phase 0/1 stay queued and are picked up.
 - Encoder module (queue + ad-hoc to custom_encode/).
