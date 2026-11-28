@@ -359,7 +359,7 @@ id: default-320p
 type: 320p          # 320p | hq | custom
 
 # Video
-codec: libx264
+codec: h264_nvenc   # or libx264 if encoder: cpu
 height: 320         # width calculated to preserve aspect; "source" = no resize
 rate_control: crf   # crf | bitrate
 crf: 23
@@ -373,7 +373,7 @@ audio_bitrate: 128k
 # Container
 container: mp4
 
-notes: Library proxy. Always queued after ingest.
+notes: Library proxy. Queued only after assignment to a real project.
 ```
 
 **HQ example**
@@ -1298,21 +1298,34 @@ Never refuse a dump because the server is down.
 - It sits in waiting until the Project manager assigns it to a real project.
 - Anyone can create a temp project. It is not in the final archive until a producer approves it in the Project manager and assigns it to a real project.
 
+
+### Project manager — Phase 2
+
+Server-only. Admin or producer key.
+
+- Create a real project (name, requirements from the fixed lists, FPS required).
+- List open, closed, and temp projects.
+- Merge a temp into an existing real project, or assign a new name.
+- Edit requirements. A change only affects the incompatibility warning on later ingests. Old mags are not rewritten.
+- Job card is the client view of an open project's requirements.
+
 ### Phase 2 decisions
 
-- Encode runs on the server GPU only. Clients do not encode.
+- Encode runs on the server. Clients do not encode. GPU if present, CPU fallback. Setting in config (`encoder: gpu` or `cpu`).
+- A 320p job is created only when a mag is assigned to a real project. Temp mags are not encoded.
 - Telemetry on day one: queue depth, disk free, serve heartbeat.
-- Job card offline: never refuse. Operator may set up a custom project and dump local-only to a drive until the server is reachable. Offline custom-project behaviour still needs a design pass.
-- A producer key can create a project and edit requirements on an existing project.
-- Key manager in Phase 2 is a TUI, not CLI-only.
+- Temp projects: ingest `n` always creates a temp project. FPS is required. No auto-merge by name. Client refuses a name already in use locally. Producer merges or renames in the Project manager.
+- Real projects are created only in the Project manager (admin or producer key).
+- Key manager in Phase 2 is a TUI.
+- Clean: field does not manage archive copies. Server ZFS is the primary defence. USB may be wiped once synced.
 
 ### Phase 2 – Proxies, encoder, dashboards, projects, keys
-- 320p encode worker and rules. Jobs queued in Phase 0/1 stay queued and are picked up.
+- 320p encode worker. Jobs start only on assignment to a real project.
 - Encoder module (queue + ad-hoc to custom_encode/).
 - Server dashboard (landing) and client dashboard. Library is a stub only. Full Library is Phase 3.
 - Telemetry file.
-- Project manager: create project, set requirements from the fixed lists, Job card on the client.
-- Key manager: generate, accept, revoke, producer flag. Thin CLI is enough. Full Key module screen can follow.
+- Project manager: create real projects, set requirements, merge or rename temps, Job card on the client.
+- Key manager TUI: generate, accept, revoke, producer flag.
 - Producer key and Job card are Phase 2, not deferred.
 
 ### Phase 3 – Logging & Library
