@@ -1269,6 +1269,15 @@ When a producer assigns a temp mag to a real project:
 - Until the set is seen, drives may still say `(T)`. Server is the authority.
 - Client shows “assigned, drives not updated” if the set is absent.
 
+
+### Temp project names
+
+- No auto-merge. A temp project is never attached to an existing project because the name matches.
+- Dump and sync are not blocked. The mag is pulled to the server and stays temp.
+- If the name already exists on the client, the client refuses to reuse it for a new temp project.
+- In the Project manager, a producer either merges the temp into the existing project or assigns a new name.
+- Real projects may still attach a mag when the operator selects that open project. Closed projects never receive new mags.
+
 ### Offline temp project
 
 Never refuse a dump because the server is down.
