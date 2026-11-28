@@ -1255,6 +1255,20 @@ Full rationale and the complete specification are in `docs/technical-review-and-
 
 
 
+
+### Assignment pull-back
+
+When a producer assigns a temp mag to a real project:
+
+- Server updates `project_id` and rewrites `magcard.txt` (previous card backed up).
+- Encode is allowed only after assignment.
+- On the next sync or status, the server sends mag UUID → real project.
+- Client updates its local record and any staged `magcard.txt`.
+- When the field set is next mounted, client rewrites `magcard.txt` on master and slave and the project line in `magvault-backup.txt`.
+- Folder name does not change. Media is not copied again.
+- Until the set is seen, drives may still say `(T)`. Server is the authority.
+- Client shows “assigned, drives not updated” if the set is absent.
+
 ### Offline temp project
 
 Never refuse a dump because the server is down.
