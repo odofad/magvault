@@ -65,7 +65,7 @@ mags/                              # flat, no subfolders
 proxies/
   db/                              # 320p library proxies
     <YYYYMMDD>_<mag-uuid>/
-      <proxy files, original basenames>
+      <proxy files, relative path under mags/ preserved>
   hq/                              # optional full-res lower-bitrate HEVC
     <YYYYMMDD>_<mag-uuid>/
       <proxy files>
@@ -588,7 +588,7 @@ Applies to all fields: camera, format, gamma, gamut, project assignment, manifes
 3. Present guesses and file list to operator.
 4. Operator:
    - Confirms or corrects camera model, file format, gamma, gamut, and shoot day (selected only from existing profiles).
-   - Assigns to an existing **open** project (select from list) or creates a new project (UUID assigned immediately, status open).
+   - Assigns to an existing open real project, or creates a temp project (FPS required). Never creates a real project.
    - Adds any mag-level notes.
 5. System performs verified copy into `mags/<shootday>_<new-mag-uuid>/`:
    - Exact card contents, original filenames and sidecars preserved.
@@ -783,7 +783,7 @@ The dashboard is the first screen after launch. It shows status and is the way t
 
 **Client dashboard**
 - Thin status: server connection state (online/offline/syncing), simple queue depth number when connected, local USB/staging status.
-- Module menu: Ingest, Logging (local-capable), Library (local proxies + export requests), and the ability to open the full server dashboard over SSH.
+- Module menu: Ingest, Logging (local-capable), Library (local proxies + export requests), and a status summary from the gate (queue depth, free space, serve heartbeat). The client key cannot open a server screen.
 - Does **not** show full encoder progress or zmag drive health by default. Those stay on the server.
 - Local USB/staging and recent local activity are first-class.
 
@@ -1080,7 +1080,7 @@ Two ways to add a client:
 
 1. **Generate on server**
    - Admin generates a key pair in the Key module.
-   - Public key is added to `~magvaultclient/.ssh/authorized_keys`.
+   - Public key is written to the Magvault-managed keys file. `AuthorizedKeysCommand` serves it. The module does not edit `authorized_keys`.
    - Private key is shown once.
    - Admin can:
      - `w` write it to a chosen file, or
@@ -1092,7 +1092,7 @@ Two ways to add a client:
 2. **Accept a client public key**
    - Client generates its own key pair.
    - Admin copies the public key (USB, paste) and adds it via the Key module.
-   - Public key is added to `~magvaultclient/.ssh/authorized_keys`.
+   - Public key is written to the Magvault-managed keys file. `AuthorizedKeysCommand` serves it. The module does not edit `authorized_keys`.
 
 Both keep the admin as the only person who can grant access. No self-service enrollment.
 
@@ -1340,6 +1340,7 @@ Server-only. The producer reaches it by a normal SSH login to the server (separa
 **Phase 2 schema (before coding)**
 - `projects.kind`: `temp` or `real`. Default `temp` for ingest `n`.
 - `projects.approved_at`, `projects.approved_by` for the producer merge.
+- Merges are recorded in `project_log`. Existing projects migrate as `real`.
 - `projects.requirements`: FPS required; other fields optional. GOP not format.
 
 ### Phase 2 decisions
