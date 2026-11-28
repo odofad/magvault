@@ -359,7 +359,7 @@ id: default-320p
 type: 320p          # 320p | hq | custom
 
 # Video
-codec: h264_nvenc   # server uses this when encoder: gpu; libx264 when encoder: cpu
+codec: h264_nvenc   # GPU profile. A CPU profile uses libx264 and may set crf/preset.
 height: 320         # width calculated to preserve aspect; "source" = no resize
 rate_control: crf   # crf | bitrate
 crf: 23
@@ -498,11 +498,13 @@ Magvault has no internal user database. Access is the system user plus SSH keys.
 
 **Producer key** (optional) — Phase 2.
 - Most clients use a normal key. They cannot create projects.
-- A key can be marked `producer: yes` in the Key module.
+- A key can be marked `producer: yes` in the Key module. That flag only affects the client Job card.
+- Server Project manager access is a separate login: user `magvault-producer` (or equivalent). It can run `magvault ui` and write the database. It is not the admin `magvault` user and it is not a gate key. The phase-gate security review treats this account as a limited server login.
 - This is not sudo. It does not grant ZFS, Prepare, or any root helper rights.
 - On the client it only edits the Job card on an open project. It cannot create a real project. Real project work is done by SSH to the server, not through the gate.
 - The Job card stays read-only for normal keys.
-- The gate checks the key label. Creating a project is logged with that label.
+- The gate checks the key label. Job card edits are logged with that label. Creating a real project is logged with the server account that ran the Project manager.
+- `ingest --project <name>`: if the name is an open real project, assign the mag to it. If the name is unknown, create a temp project (FPS required) and refuse if that name is already in use on the client. It never creates a real project.
 - Server admin sets or clears the flag. Normal keys stay the default.
 
 ### Sudo (no root)
@@ -1311,14 +1313,21 @@ Server-only. The producer reaches it by a normal SSH login to the server (separa
 
 
 **Encoder backend**
-- `path.conf` key `encoder: gpu` or `encoder: cpu`. Default `gpu`.
+- `magvault.conf` key `encoder: gpu` or `encoder: cpu`. Default `gpu`. Not in path.conf.
 - `gpu` uses NVENC when a GPU is present. If no GPU is found, fall back to CPU and log WARN.
 - `cpu` uses libx264. CRF and preset apply only to libx264. NVENC uses its own rate control.
 - Courage: confirm GPU model before Phase 2 coding. The profile file stores one codec; the server picks the matching profile.
 
+
+**Phase 2 schema (before coding)**
+- `projects.kind`: `temp` or `real`. Default `temp` for ingest `n`.
+- `projects.approved_at`, `projects.approved_by` for the producer merge.
+- `projects.requirements`: FPS required; other fields optional. GOP not format.
+- `magvault-backup.txt` gains a `project=` line so pull-back can rewrite it.
+
 ### Phase 2 decisions
 
-- Encode runs on the server. Clients do not encode. GPU if present, CPU fallback. Setting in config (`encoder: gpu` or `cpu`).
+- Encode runs on the server. Clients do not encode. `magvault.conf` sets `encoder: gpu` or `cpu`. GPU falls back to CPU if no GPU is found and logs WARN. Two profiles: one NVENC (no CRF/preset), one libx264 (CRF/preset). The server picks the profile that matches the setting.
 - A 320p job is created only when a mag is assigned to a real project. Temp mags are not encoded.
 - Telemetry on day one: queue depth, disk free, serve heartbeat.
 - Temp projects: ingest `n` always creates a temp project. FPS is required. No auto-merge by name. Client refuses a name already in use locally. Producer merges or renames in the Project manager.
