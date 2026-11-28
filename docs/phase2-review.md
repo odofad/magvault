@@ -1,122 +1,125 @@
-# Magvault — Phase 2 plan review (PLAN.md at `e524900`)
+# Magvault — Phase 2 plan review (PLAN.md at `58e2fa3`)
 
-Date: 2026-11-28. Third review. Checked:
-- PLAN.md at `e524900` ("Close Phase 2 review X1-X3"), whole file, against the seven
-  locked Phase 2 rules and the four confirmations asked for;
-- the shipped encoder profiles (`share/encoders/`).
+Date: 2026-11-28. Fourth review. Checked:
+- PLAN.md at `58e2fa3` ("Phase 2: AMD GPU profiles, producer spool, temp name resolution,
+  green = on server"), whole file, against the seven locked Phase 2 rules and the four
+  confirmations asked for;
+- the encoder profile parser (`src/profiles.rs`), for what it accepts today.
 
-The second review (at `79d8b60`) left blockers X1–X3. Line numbers are PLAN.md at
-`e524900`. No code or PLAN changes were made.
+The third review (at `e524900`) left blockers Y1–Y3. Line numbers are PLAN.md at
+`58e2fa3`. No code or PLAN changes were made.
 
-## Verdict: FAIL (three small blockers)
+## Verdict: FAIL (three edits left in two sections)
 
-X1 and X3 are fixed. X2 is half fixed:
-- `encoder:` is now in `magvault.conf` and "two profiles" is stated;
-- but the example profile breaks the rule it sits next to, and nothing says how the
-  server tells the GPU profile from the CPU one.
+Y2 and Y3 are fixed. The producer spool is stated well.
 
-Two new gaps:
-- the `ingest --project` wording has no case for a temp project that already exists;
-- the new `project=` line in `magvault-backup.txt` cannot describe a set that holds mags
-  from several projects.
+What remains is text the new edits did not reach:
+- **Encoder backend section (L1322–1326):** still describes NVIDIA, not AMD VAAPI.
+- **GPU example:** uses `rate_control: cq`, which the profile rules do not allow and the
+  parser refuses.
+- **Card dump status:** the colour bullets (L624–626) still define green as "two copies",
+  directly above the new sentence that says green means "on the server".
 
-Each is a short PLAN edit.
+All three are text edits; no design is open.
 
 ## Locked rules
 
 | # | Rule | Result | Notes |
 |---|---|---|---|
-| 1 | `n` always creates a temp project. FPS is required. | **Pass** | L260, L274, L805, L1323, L1333, and `ingest --project` at L507. |
-| 2 | No encode until the mag is assigned to a real project | **Pass** | Covered at L583, L876, L902, L1253, L1331 and L1339. Ingest into a real project counts as assignment (L902). |
-| 3 | No auto-merge. Client refuses a reused name. Producer merges or renames on the server. | **Pass** | L1283–1287 and L1333. The CLI case of an existing temp is a gap, not a contradiction (Y2). |
-| 4 | Real projects are created only in the Project manager on the server | **Pass** | L244, L274, L497, L503, L507 ("It never creates a real project"), L1306 and L1334. Real-project creation is logged with the server account (L506). |
-| 5 | Key manager is a TUI | **Pass** | L1335 and L1344. "Key module" naming is left at L501, L1066, L1078 and L1365 (N4). |
-| 6 | GPU with CPU fallback | **Fail** | Y1. The backend setting and fallback are stated correctly (L1316–1318, L1330). The example profile and the selection rule are not. |
-| 7 | Clean: field does not manage copies. Server ZFS is the defence. | **Pass** | L692–695 and L1336. The staging and green wording still counts copies on the field side (N2). |
+| 1 | `n` always creates a temp project. FPS is required. | **Pass** | L260, L274, L812, L1339, and `--project` resolution at L514. |
+| 2 | No encode until the mag is assigned to a real project | **Pass** | Covered at L590, L883, L909, L1260, L1337 and L1345. |
+| 3 | No auto-merge. Client refuses a reused name. Producer merges or renames on the server. | **Pass** | L1290–1294 and L514. `n` refuses an existing name; `--project` attaches to a known temp project; duplicate temp names from two offline clients are merged by the producer; the server lists open temp projects to clients. |
+| 4 | Real projects are created only in the Project manager on the server | **Pass** | L244, L509, L514 ("It never creates a real project"), L1313 and L1340. |
+| 5 | Key manager is a TUI | **Pass** | L1341 and L1350. "Key module" naming is left at L508, L1068, L1073, L1085 and L1371 (N4). |
+| 6 | GPU with CPU fallback | **Fail** | Z1, Z2. The decision line (L1336) is right. The Encoder backend section and the GPU example contradict it. |
+| 7 | Clean: field does not manage copies. Server ZFS is the defence. | **Pass** | Clean and copies (L699) and L1342. Staging is now called a convenience buffer (L628). |
 
 ## Confirmations
 
 | Check | Result | Notes |
 |---|---|---|
-| Producer SSH account named, distinct from admin and gate | **Pass** | L502: user `magvault-producer` (or equivalent). It runs `magvault ui` and writes the database. It is not the admin `magvault` user and not a gate key; the security review treats it as a limited server login. Two follow-ups are in the non-blocking table: N12 (L244 still says "or an admin session") and N13 (what the account sees and how it writes the database). |
-| `encoder:` in `magvault.conf`; two profiles; server picks by setting | **Fail** (Y1) | `magvault.conf`: yes (L1316, "Not in path.conf"). Two profiles: stated (L1330). Picks by setting: stated, but there is no rule for which profile is the GPU one, and the example contradicts L1330. |
-| `ingest --project` never creates a real project | **Pass**, with a gap (Y2) | L507 says it in so many words. The case of a name that is an existing temp project is missing. |
-| Phase 2 schema notes present (kind, approval, requirements, backup project line) | **Fail** (Y3) | `projects.kind` (L1323), `approved_at` / `approved_by` (L1324) and requirements "FPS required … GOP not format" (L1325) are present and fine. The backup project line (L1326) is present but has the wrong shape. |
+| Producer account named, group-readable only, changes through a spool that serve applies | **Pass** | L509: `magvault-producer` can read the database but not write it. Create, merge, rename and approve go through a producer spool that `serve` checks and applies. `magvault ui` as that account shows only the Project manager and a read-only dashboard. L244 now names the login. One gap: N14 (edit requirements is not in the spool list). |
+| Encoder profiles: `default-320p` CPU (libx264); `default-320p-gpu` AMD VAAPI; `encoder:` in `magvault.conf`; GPU failure reruns once on CPU | **Fail** (Z1, Z2) | Correct in the decisions (L1336) and the CPU example (L355–366). L1322–1326 still say NVENC. The GPU example's `rate_control: cq` breaks the profile rules (L406–410). |
+| `ingest --project` resolves open real → known temp → new temp; never creates a real project | **Pass** | L514, word for word. A new temp needs `--require-fps`. |
+| Green means on the server; no project line in `magvault-backup.txt` | **Fail** (Z3) on green; **Pass** on the project line | <ul><li>The project line is removed from the schema notes. Pull-back compares magcards with the cached server mapping and rewrites only those that differ, project keys only, old card backed up (L1282).</li><li>The paragraph at L628 says green means on the server, but the bullets above it (L624–626) still say "two copies".</li></ul> |
 
 ## Remaining blockers
 
-**Y1. The GPU example breaks the two-profile rule, and the selection rule is missing.**
-- **The example contradicts L1330.** The example profile (L355–377) is now the GPU
-  profile: `codec: h264_nvenc` (L362). But it still sets `rate_control: crf`, `crf: 23`
-  and `preset: veryfast` (L364–366). L1330 says the NVENC profile has "no CRF/preset", and
-  L1318 says CRF and preset apply only to libx264.
-- **No way to tell the profiles apart.** "The server picks the profile that matches the
-  setting" (L1319, L1330), but nothing marks a profile as GPU or CPU. The server's
-  `magvault.conf` has a single `default_profile_320p` (used by Phase 0/1 code).
-- **Shipped file conflict.** The shipped `share/encoders/default-320p.enc` is the libx264
-  profile with the same id `default-320p` as the PLAN's NVENC example.
+**Z1. The Encoder backend section still describes NVIDIA.**
+L1322–1326:
+- "`gpu` uses NVENC when a GPU is present"
+- "NVENC uses its own rate control"
+- "Courage: confirm GPU model before Phase 2 coding. The profile file stores one codec;
+  the server picks the matching profile."
+
+These contradict L1336:
+- GPU is AMD `h264_vaapi`;
+- two named settings (`default_profile_320p`, `default_profile_320p_gpu`);
+- the per-job rerun on CPU.
+
+L1325 also gives only the "no GPU found" fallback, not "job fails on the GPU encoder → rerun
+once on CPU".
+
+**Fix:** rewrite the section to match L1336 (VAAPI, the two settings, both fallbacks), or
+delete it and point to the decision line. The GPU model is now known (AMD), so the
+"confirm" sentence can go.
+
+**Z2. The GPU profile's rate control is outside the profile schema.**
+- **Not allowed by the rules.** The GPU example (L368–373) uses `rate_control: cq` and
+  `cq: 23`. The profile rules (L406–410) allow `rate_control` with "either `crf` or
+  `bitrate`". `src/profiles.rs` accepts only those two and refuses the GPU profile as
+  written ("rate_control must be crf or bitrate").
+- **No such ffmpeg option.** `h264_vaapi` has no `cq` option. Its constant-quality mode is
+  `-rc_mode CQP` with `-qp N`; `-rc_mode ICQ` with `-global_quality N` also exists.
 
 **Fix:**
-- Give two examples: `default-320p` (libx264, `crf`, `preset`) and `default-320p-gpu`
-  (`h264_nvenc` with its own rate control, for example `rate_control: cq` and `cq: 23`).
-- Add one selection rule, for example `default_profile_320p` (cpu) and
-  `default_profile_320p_gpu` in `magvault.conf`, or a `backend: gpu|cpu` key in each
-  `.enc`.
+- add one value to the `.enc` vocabulary, e.g. `rate_control: qp` with `qp: <n>` (mapped to
+  `-rc_mode CQP -qp N` for VAAPI);
+- add it to "Required minimum";
+- use it in the GPU example.
 
-**Y2. `ingest --project <existing temp name>` has no rule.**
-L507 has two branches:
-- an open real project: assign;
-- an unknown name: create a temp project, and refuse if the name is in use on the client.
+Optional, but it helps whoever writes the worker:
+- show the GPU example as its own file block, with `type`, `height` and audio keys, which
+  "Required minimum" asks for. Today it is a commented-out stub inside the CPU block.
+- note that VAAPI needs a render device (`/dev/dri/renderD128`, the `magvault` user in the
+  `render` group) and hardware scaling (`scale_vaapi` after `hwupload`).
 
-A name that is an existing temp project falls in neither branch. That is the usual offline
-case: the second and third card of the same temp shoot. Read as written, the CLI would
-refuse those cards. The TUI side is not stated either; can the operator pick an existing
-temp project in 3 Project?
+**Z3. The dump colour bullets contradict green = on the server.**
+L624–626 still read:
+- Yellow: "dumped, but not yet two copies and uploaded to the server";
+- Green: "two copies exist and the mag is uploaded to the server".
 
-**Fix:** add one line. A name that matches a temp project this client knows (one it
-created, or one the server lists) attaches the mag to that temp project; only creating a
-new temp with a name already in use is refused. This also settles N1 (what "in use on the
-client" covers).
+L628 says: green means on the server; yellow means dumped here but not yet on the server.
 
-**Y3. One `project=` line cannot describe a field set.**
-L1326: "`magvault-backup.txt` gains a `project=` line so pull-back can rewrite it."
-- **Several projects per set.** A field set holds many mags, often from different
-  projects: a temp project and a real one, several shoot days. Pull-back assigns one mag
-  at a time (L1269–1276), so one line per file cannot record it.
-- **Wrong format.** The file uses a `key: value` header and `# mags` lines
-  `mag_folder | state | updated`; a `project=` line does not match either.
-
-**Fix:** add a project column to each `# mags` line (`mag_folder | state | updated |
-project_uuid`), with a format bump (`magvault-backup/2`); readers accept the old
-three-column lines. Or drop the clause and rewrite only the magcards on the set.
+**Fix:** reword the two bullets to match L628. The code still shows green for "two
+copies, one on the server" (Phase 1). That changes in Phase 2 with the new wording.
 
 ## Non-blocking items still open
 
 | # | Item | Where | State |
 |---|---|---|---|
-| N12 | "admin session" | L244 | The Job card says the producer uses "the server console (or an admin session)", but L502 says the producer account is not the admin. Change it to "the `magvault-producer` login". |
-| N13 | Producer account scope | L502 | The account "can run `magvault ui` and write the database". Not stated:<ul><li>which modules it sees (Project manager only? not Key manager, Profile Editor, Zmag, Encoder controls);</li><li>how it writes a database owned by `magvault` (group-writable db file and folder, which SQLite needs for its journal).</li></ul>Needed before the Project manager code and for the security review. |
-| N1 | Name-exists scope | L1285, L1333 | Settled once Y2 is written. |
-| N9 | Old schema section | L116–123 | Still says requirements are "optional" and lists "format". The Phase 2 notes (L1322–1326) override it; align it when schema 3 is written. |
-| N2 | Staging and green wording | L608, L619, L631 | Staging is kept until "two backups"; green means "two copies". Confirm (buffer convenience) or simplify, given rule 7. |
-| N6 | Dashboard letters | L765, L770, L797 | No entry or letter for Encoder, Project manager, Key manager or the client Job card. |
-| N4 | Key module / Key manager naming | L501, L1066, L1078, L1365 | Use one name; trim the Phase 5 entry. |
-| N5 | Telemetry scope | L1104 vs L1332 | ZFS health is required in the dashboard sections, while day one is queue depth, disk free and serve heartbeat. The client queue-depth gate verb is unnamed. |
-| N8 | Conflict handling vs threat model | L560 vs L1188 | The pull-back rewrite changes project keys only, never the manifest. |
-| N10 | Mag merge vs project merge | L108 vs L1286 | One clause would avoid a misread. |
-| N11 | Audit leftovers | L130, L134, L419, L625, L1244, L1368 | <ul><li>camera "free text";</li><li>"archived";</li><li>no DEBUG level;</li><li>F1 "In this batch";</li><li>master/slave "or drop the distinction";</li><li>Phase 5 "Sudo helper".</li></ul> |
+| N14 | Producer spool actions | L509 vs L1318 | The spool covers create, merge, rename and approve. The Project manager also lists "Edit requirements" (and the open / closed rule allows close and reopen), and those writes are not in the spool list. Add them, or say they are admin-only. |
+| N15 | Read-only database access | L509 | A group-readable SQLite file can be read without write rights only in rollback-journal mode, or when opened read-only / immutable. WAL mode would need write access to the `-shm` file. Say so, or keep the database in rollback-journal mode (as today). |
+| N16 | CPU example CRF | L365 | The example now sets `crf: 28`; the shipped `share/encoders/default-320p.enc` has `crf: 23`. Pick one. |
+| N17 | User model list | L503–504 | `magvault-producer` is described under the Producer key but not listed with the server and client users. |
+| N9 | Old schema section | L116–123 | Still says requirements are "optional" and lists "format". The Phase 2 notes (L1330–1332) override it; align it when schema 3 is written. |
+| N6 | Dashboard letters | L772, L777, L804 | No entry or letter for Encoder, Project manager, Key manager or the client Job card (suggested: `t`, `m`, `k`, `j`). |
+| N4 | Key module / Key manager naming | L508, L1068, L1073, L1085, L1371 | Use one name; trim the Phase 5 entry. |
+| N5 | Telemetry scope | L1111 vs L1338 | ZFS health is required in the dashboard sections, while day one is queue depth, disk free and serve heartbeat. The client queue-depth gate verb is unnamed. |
+| N8 | Conflict handling vs threat model | L567 vs L1195 | The pull-back rule (L1282, project keys only) settles it for pull-back; L567 still lists "manifest" under "database wins". |
+| N10 | Mag merge vs project merge | L108 vs L1317 | One clause would avoid a misread. |
+| N2 | Staging autoclean | L615, L640 | Consistent now that staging is a "convenience buffer" (L628). No action needed unless you want the two-backup rule simplified. |
+| N11 | Audit leftovers | L130, L134, L426, L632, L1251, L1374 | <ul><li>camera "free text";</li><li>"archived";</li><li>no DEBUG level;</li><li>F1 "In this batch";</li><li>master/slave "or drop the distinction";</li><li>Phase 5 "Sudo helper".</li></ul> |
 | — | docs/test-checklist.md | L14, L38, L45 | Still lists a `magvaultclient` user on the client. |
 
 ## To pass
 
-1. **Y1:**
-   - two valid example profiles (libx264 with CRF and preset; NVENC with its own rate
-     control);
-   - one rule for how the server picks between them.
-2. **Y2:** `--project <existing temp>` (and the TUI pick) attaches to that temp project;
-   only a new temp with a used name is refused.
-3. **Y3:** a per-mag project column in `magvault-backup.txt` (format bump), or no project
-   in that file.
+1. **Z1:** rewrite L1322–1326 for AMD VAAPI, the two profile settings and both CPU
+   fallbacks (or remove the section and keep L1336).
+2. **Z2:** add `rate_control: qp` + `qp: <n>` (VAAPI CQP) to the profile vocabulary and
+   "Required minimum", and use it in the GPU example.
+3. **Z3:** reword the yellow and green bullets at L625–626 to "not yet on the server" /
+   "on the server".
 
-**Before the code that needs them:** N13 before the Project manager and the security
-review; N9 when schema 3 is written. The rest as the code reaches them.
+**Before the code that needs them:** N14 and N15 before the Project manager; N9 with
+schema 3. The rest as the code reaches them.
