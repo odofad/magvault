@@ -235,9 +235,7 @@ A mag can be soft-locked once it has been used on a production. Soft lock does n
 
 
 
-### Job card (client) — deferred
-
-Deferred to the producer console phase. Not Phase 1.
+### Job card (client) — Phase 2
 
 The client dashboard has a Job card page. The field operator loads it to see what the producer required before setting up gear.
 
@@ -498,7 +496,7 @@ Magvault has no internal user database. Access is the system user plus SSH keys.
 - **Server user** (`magvault`): admin. Can open the Profile Editor and any other admin-only module. Runs the server process.
 - **Client user** (`magvaultclient`): shared username for all clients. Each client is identified by its own unique SSH key. Can use Ingest, Logging, Dashboard, Encoder, etc. Cannot open admin-only modules. A producer key can create projects; it does not open admin modules.
 
-**Producer key** (optional) — deferred to the producer console phase. Not Phase 1.
+**Producer key** (optional) — Phase 2.
 - Most clients use a normal key. They cannot create projects.
 - A key can be marked `producer: yes` in the Key module.
 - This is not sudo. It does not grant ZFS, Prepare, or any root helper rights.
@@ -1255,11 +1253,14 @@ Full rationale and the complete specification are in `docs/technical-review-and-
 - Reconnect-and-sync, pending-sync safety.
 - Server confirmation + autoclean (after two backups).
 
-### Phase 2 – Proxies, encoder, dashboards
-- 320p encode queue and rules.
+### Phase 2 – Proxies, encoder, dashboards, projects, keys
+- 320p encode worker and rules. Jobs queued in Phase 0/1 stay queued and are picked up.
 - Encoder module (queue + ad-hoc to custom_encode/).
-- Server dashboard (landing) and client dashboard (includes Library).
+- Server dashboard (landing) and client dashboard. Library is a stub only. Full Library is Phase 3.
 - Telemetry file.
+- Project manager: create project, set requirements from the fixed lists, Job card on the client.
+- Key manager: generate, accept, revoke, producer flag. Thin CLI is enough. Full Key module screen can follow.
+- Producer key and Job card are Phase 2, not deferred.
 
 ### Phase 3 – Logging & Library
 - Logging module (fields written to magcard # logging section).
