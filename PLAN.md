@@ -688,8 +688,8 @@ This is field USB only. It is not related to zmag primary/backup roles.
 
 
 **Clean and copies**
-- The server is the secure archive. A single server copy is acceptable until zmags exist.
-- Once a mag is synced, Clean may wipe it from the USB set. No extra warning about "only copy".
+- Field crew do not manage archive copies. Once a mag is synced, Clean may wipe it from the USB set. No warning about "only copy".
+- The server is the archive. ZFS on the server is the primary defence (pool redundancy). Zmags and further copies are a server-side concern, not a field concern.
 - The camera card is outside Magvault. Clean does not touch it.
 
 **Clean**
